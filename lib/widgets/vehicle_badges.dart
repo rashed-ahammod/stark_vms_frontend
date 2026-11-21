@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../config/app_colors.dart';
 import '../models/vehicle.dart';
 
 class VehicleStatusBadge extends StatelessWidget {
@@ -10,39 +11,14 @@ class VehicleStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (bgColor, fgColor, borderColor, dotColor) = switch (status) {
-      VehicleStatus.available => (
-          const Color(0xFFECFDF3),
-          const Color(0xFF027A48),
-          const Color(0xFFABEFC6),
-          const Color(0xFF12B76A),
-        ),
-      VehicleStatus.inUse => (
-          const Color(0xFFEFF8FF),
-          const Color(0xFF175CD3),
-          const Color(0xFFB2DDFF),
-          const Color(0xFF2E90FA),
-        ),
-      VehicleStatus.maintenance => (
-          const Color(0xFFFFFAEB),
-          const Color(0xFFB54708),
-          const Color(0xFFFEDF89),
-          const Color(0xFFF79009),
-        ),
-      VehicleStatus.inactive => (
-          const Color(0xFFF2F4F7),
-          const Color(0xFF475467),
-          const Color(0xFFD0D5DD),
-          const Color(0xFF667085),
-        ),
-    };
+    final palette = StatusPalette.of(status);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: bgColor,
+        color: palette.background,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: borderColor),
+        border: Border.all(color: palette.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -51,18 +27,21 @@ class VehicleStatusBadge extends StatelessWidget {
             width: 6,
             height: 6,
             decoration: BoxDecoration(
-              color: dotColor,
+              color: palette.accent,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            status.label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: fgColor,
-              height: 1.1,
+          Flexible(
+            child: Text(
+              status.label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: palette.foreground,
+                height: 1.1,
+              ),
             ),
           ),
         ],

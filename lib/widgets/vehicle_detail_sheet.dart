@@ -40,7 +40,9 @@ class _VehicleDetailSheet extends StatelessWidget {
 
   String _formatDate(DateTime? dt) {
     if (dt == null) return '—';
-    return DateFormat('MMM d, yyyy • h:mm a').format(dt.toLocal());
+    // The API sends timestamps with no timezone suffix, so DateTime.parse has
+    // already produced a local DateTime - converting again would be wrong.
+    return DateFormat('MMM d, yyyy • h:mm a').format(dt);
   }
 
   @override

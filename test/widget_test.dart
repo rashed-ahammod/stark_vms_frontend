@@ -14,6 +14,7 @@ import 'package:stark_vms/providers/auth_providers.dart';
 import 'package:stark_vms/providers/vehicle_providers.dart';
 import 'package:stark_vms/repositories/auth_repository.dart';
 import 'package:stark_vms/repositories/vehicle_repository.dart';
+import 'package:stark_vms/widgets/user_menu.dart';
 
 class _StubVehicleRepository implements VehicleRepository {
   @override
@@ -98,7 +99,10 @@ void main() {
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Sign in to manage the vehicle fleet'), findsOneWidget);
+    expect(
+      find.text('Use your administrator account to manage the fleet.'),
+      findsOneWidget,
+    );
     expect(find.text('Sign In'), findsOneWidget);
     // The fleet screens must not be reachable without a session.
     expect(find.text('No vehicles registered yet'), findsNothing);
@@ -129,6 +133,8 @@ void main() {
 
     expect(find.text('Stark Group VMS'), findsOneWidget);
     expect(find.text('No vehicles registered yet'), findsOneWidget);
-    expect(find.text('Administrator'), findsOneWidget);
+    // The signed-in user now lives behind the account menu in the top bar
+    // rather than as inline text.
+    expect(find.byType(UserMenu), findsOneWidget);
   });
 }

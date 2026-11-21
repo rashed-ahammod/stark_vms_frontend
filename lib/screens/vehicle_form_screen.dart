@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../config/app_colors.dart';
 import '../models/vehicle.dart';
 import '../providers/vehicle_providers.dart';
 import '../repositories/vehicle_repository.dart';
+import '../widgets/state_message_card.dart';
 
 class VehicleFormScreen extends ConsumerStatefulWidget {
   const VehicleFormScreen({super.key, this.vehicle});
@@ -184,7 +186,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     final maxYear = DateTime.now().year + 1;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppSurface.page,
       body: Column(
         children: [
           Container(
@@ -244,22 +246,46 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
           ),
           Expanded(
             child: _loadError != null
-                ? _LoadErrorCard(
-                    error: _loadError!,
-                    vehicleNumber: widget.vehicle?.vehicleNumber,
-                    onRetry: () {
-                      final id = widget.vehicle?.id;
-                      if (id == null) return;
-                      setState(() {
-                        _isLoadingVehicle = true;
-                        _loadError = null;
-                      });
-                      _loadVehicle(id);
-                    },
-                    onBack: () => Navigator.of(context).pop(false),
+                ? StateMessageCard(
+                    icon: _loadError!.isNotFound
+                        ? LucideIcons.fileX
+                        : LucideIcons.wifiOff,
+                    tone: StateTone.destructive,
+                    title: _loadError!.isNotFound
+                        ? 'Vehicle no longer exists'
+                        : 'Could not load vehicle',
+                    message: _loadError!.isNotFound
+                        ? '${widget.vehicle?.vehicleNumber ?? 'This vehicle'} was not found. It may have been deleted by someone else.'
+                        : _loadError!.message,
+                    actions: [
+                      ShadButton.outline(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        leading: const Icon(LucideIcons.arrowLeft, size: 15),
+                        child: const Text('Back to list'),
+                      ),
+                      if (!_loadError!.isNotFound)
+                        ShadButton(
+                          onPressed: () {
+                            final id = widget.vehicle?.id;
+                            if (id == null) return;
+                            setState(() {
+                              _isLoadingVehicle = true;
+                              _loadError = null;
+                            });
+                            _loadVehicle(id);
+                          },
+                          leading: const Icon(LucideIcons.refreshCw, size: 15),
+                          child: const Text('Retry'),
+                        ),
+                    ],
                   )
                 : _isLoadingVehicle
-                ? const _FormLoadingCard()
+                ? const StateMessageCard(
+                    icon: LucideIcons.loader,
+                    tone: StateTone.progress,
+                    title: 'Loading vehicle details',
+                    message: 'Fetching the latest record from the server.',
+                  )
                 : SingleChildScrollView(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 24,
@@ -320,7 +346,9 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                       return null;
                                     },
                                   ),
-                                  right: ShadSelectFormField<VehicleType>(
+                                  right: SizedBox(
+                                    width: double.infinity,
+                                    child: ShadSelectFormField<VehicleType>(
                                     id: 'vehicleType',
                                     forceErrorText:
                                         formState.fieldErrors['vehicleType'],
@@ -347,6 +375,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                       }
                                       return null;
                                     },
+                                  ),
                                   ),
                                 ),
                                 const SizedBox(height: 16),
@@ -451,7 +480,9 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                 const SizedBox(height: 16),
                                 _FormPair(
                                   isWide: isWide,
-                                  left: ShadSelectFormField<FuelType>(
+                                  left: SizedBox(
+                                    width: double.infinity,
+                                    child: ShadSelectFormField<FuelType>(
                                     id: 'fuelType',
                                     forceErrorText:
                                         formState.fieldErrors['fuelType'],
@@ -470,6 +501,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                         Text(value.label),
                                     onChanged: (value) =>
                                         setState(() => _fuelType = value),
+                                  ),
                                   ),
                                   right: ShadInputFormField(
                                     id: 'seatingCapacity',
@@ -564,35 +596,18 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                   ),
                                 ),
                                 const SizedBox(height: 16),
-                                _FormPair(
-                                  isWide: isWide,
-                                  left: ShadSelectFormField<VehicleStatus>(
-                                    id: 'status',
-                                    label: const Text('Status *'),
-                                    initialValue: _status,
-                                    options: VehicleStatus.values
-                                        .map(
-                                          (status) => ShadOption(
-                                            value: status,
-                                            child: Text(status.label),
-                                          ),
-                                        )
-                                        .toList(),
-                                    selectedOptionBuilder: (_, value) =>
-                                        Text(value.label),
-                                    onChanged: (value) {
-                                      if (value != null) {
-                                        setState(() => _status = value);
-                                      }
-                                    },
-                                  ),
-                                  right: const SizedBox.shrink(),
+                                _StatusSelector(
+                                  value: _status,
+                                  onChanged: (value) =>
+                                      setState(() => _status = value),
                                 ),
                                 const SizedBox(height: 28),
                                 const ShadSeparator.horizontal(),
                                 const SizedBox(height: 20),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
+                                Wrap(
+                                  alignment: WrapAlignment.end,
+                                  spacing: 12,
+                                  runSpacing: 10,
                                   children: [
                                     ShadButton.outline(
                                       onPressed: formState.isSubmitting
@@ -602,7 +617,6 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                                     .pop(false),
                                       child: const Text('Cancel'),
                                     ),
-                                    const SizedBox(width: 12),
                                     ShadButton(
                                       onPressed: formState.isSubmitting
                                           ? null
@@ -637,125 +651,109 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
   }
 }
 
-/// Shown while the authoritative record is fetched via GET /vehicles/{id}.
-class _FormLoadingCard extends StatelessWidget {
-  const _FormLoadingCard();
+/// Full-width status picker.
+///
+/// Status previously sat in a half-width dropdown paired with an empty slot,
+/// which left a visible gap at the end of the form. Four options fit inline, so
+/// they are shown as segments: one tap, and the current value is always visible
+/// without opening anything.
+class _StatusSelector extends StatelessWidget {
+  const _StatusSelector({required this.value, required this.onChanged});
+
+  final VehicleStatus value;
+  final ValueChanged<VehicleStatus> onChanged;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
 
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 880),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: ShadCard(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(strokeWidth: 2.4),
-                ),
-                const SizedBox(height: 16),
-                Text('Loading vehicle details', style: theme.textTheme.h4),
-                const SizedBox(height: 6),
-                Text(
-                  'Fetching the latest record from the server.',
-                  style: theme.textTheme.muted,
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Status *',
+          style: theme.textTheme.small.copyWith(fontWeight: FontWeight.w500),
         ),
-      ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final status in VehicleStatus.values)
+              _StatusSegment(
+                status: status,
+                selected: status == value,
+                onTap: () => onChanged(status),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          "Sets the vehicle's current operational availability.",
+          style: theme.textTheme.muted.copyWith(fontSize: 12),
+        ),
+      ],
     );
   }
 }
 
-/// Shown when the edited vehicle cannot be loaded — most often a 404 because
-/// the record was deleted while the list was still on screen.
-class _LoadErrorCard extends StatelessWidget {
-  const _LoadErrorCard({
-    required this.error,
-    required this.vehicleNumber,
-    required this.onRetry,
-    required this.onBack,
+class _StatusSegment extends StatelessWidget {
+  const _StatusSegment({
+    required this.status,
+    required this.selected,
+    required this.onTap,
   });
 
-  final VehicleApiException error;
-  final String? vehicleNumber;
-  final VoidCallback onRetry;
-  final VoidCallback onBack;
+  final VehicleStatus status;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final isNotFound = error.isNotFound;
+    final palette = StatusPalette.of(status);
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: ShadCard(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.destructive.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isNotFound ? LucideIcons.fileX : LucideIcons.wifiOff,
-                    size: 28,
-                    color: theme.colorScheme.destructive,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  isNotFound
-                      ? 'Vehicle no longer exists'
-                      : 'Could not load vehicle',
-                  style: theme.textTheme.h4,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  isNotFound
-                      ? '${vehicleNumber ?? 'This vehicle'} was not found. It may have been deleted by someone else.'
-                      : error.message,
-                  style: theme.textTheme.muted,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    ShadButton.outline(
-                      onPressed: onBack,
-                      leading: const Icon(LucideIcons.arrowLeft, size: 15),
-                      child: const Text('Back to list'),
-                    ),
-                    if (!isNotFound) ...[
-                      const SizedBox(width: 12),
-                      ShadButton(
-                        onPressed: onRetry,
-                        leading: const Icon(LucideIcons.refreshCw, size: 15),
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? palette.background : theme.colorScheme.card,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected ? palette.border : theme.colorScheme.border,
+              width: selected ? 1.5 : 1,
             ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? palette.accent
+                      : theme.colorScheme.mutedForeground.withValues(
+                          alpha: 0.4,
+                        ),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                status.label,
+                style: theme.textTheme.small.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected
+                      ? palette.foreground
+                      : theme.colorScheme.foreground,
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../config/app_colors.dart';
 import '../models/vehicle.dart';
 import 'vehicle_badges.dart';
+
+/// Width reserved for the row action buttons.
+///
+/// The table header reserves the same width, so this is the single source of
+/// truth for both; two icon buttons plus their gap measure exactly this.
+const double kVehicleActionsColumnWidth = 90;
 
 class VehicleRowCard extends StatefulWidget {
   const VehicleRowCard({
@@ -57,13 +64,11 @@ class _VehicleRowCardState extends State<VehicleRowCard> {
           duration: const Duration(milliseconds: 140),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
           decoration: BoxDecoration(
-            color: _isHovered
-                ? const Color(0xFFF8FAFC)
-                : theme.colorScheme.card,
+            color: _isHovered ? AppSurface.hover : theme.colorScheme.card,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: _isHovered
-                  ? const Color(0xFFCBD5E1)
+                  ? AppSurface.borderStrong
                   : theme.colorScheme.border,
             ),
           ),
@@ -123,15 +128,21 @@ class _DesktopVehicleRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+                    // Both children are flexible: a Row lays out non-flex
+                    // children with unbounded width, so an intrinsic badge
+                    // here could never shrink and would overflow instead.
+                    Row(
                       children: [
-                        VehicleStatusBadge(status: vehicle.status),
-                        Text(
-                          vehicle.vehicleType.label,
-                          style: mutedStyle.copyWith(fontSize: 12),
+                        Flexible(
+                          child: VehicleStatusBadge(status: vehicle.status),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            vehicle.vehicleType.label,
+                            overflow: TextOverflow.ellipsis,
+                            style: mutedStyle.copyWith(fontSize: 12),
+                          ),
                         ),
                       ],
                     ),
@@ -183,13 +194,16 @@ class _DesktopVehicleRow extends StatelessWidget {
                     color: theme.colorScheme.mutedForeground,
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    vehicle.fuelType?.label ?? 'Not specified',
-                    style: vehicle.fuelType != null
-                        ? theme.textTheme.p
-                        : theme.textTheme.p.copyWith(
-                            color: theme.colorScheme.mutedForeground,
-                          ),
+                  Flexible(
+                    child: Text(
+                      vehicle.fuelType?.label ?? 'Not specified',
+                      overflow: TextOverflow.ellipsis,
+                      style: vehicle.fuelType != null
+                          ? theme.textTheme.p
+                          : theme.textTheme.p.copyWith(
+                              color: theme.colorScheme.mutedForeground,
+                            ),
+                    ),
                   ),
                 ],
               ),
@@ -246,26 +260,29 @@ class _DesktopVehicleRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        // Compact Actions with Tooltips
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ShadTooltip(
-              builder: (_) => const Text('Edit vehicle'),
-              child: ShadIconButton.outline(
-                onPressed: onEdit,
-                icon: const Icon(LucideIcons.pencil, size: 15),
+        // Fixed width so this column lines up with the ACTIONS header.
+        SizedBox(
+          width: kVehicleActionsColumnWidth,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              ShadTooltip(
+                builder: (_) => const Text('Edit vehicle'),
+                child: ShadIconButton.outline(
+                  onPressed: onEdit,
+                  icon: const Icon(LucideIcons.pencil, size: 15),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            ShadTooltip(
-              builder: (_) => const Text('Delete vehicle'),
-              child: ShadIconButton.destructive(
-                onPressed: onDelete,
-                icon: const Icon(LucideIcons.trash2, size: 15),
+              const SizedBox(width: 8),
+              ShadTooltip(
+                builder: (_) => const Text('Delete vehicle'),
+                child: ShadIconButton.destructive(
+                  onPressed: onDelete,
+                  icon: const Icon(LucideIcons.trash2, size: 15),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -384,7 +401,13 @@ class _MetaChip extends StatelessWidget {
       children: [
         Icon(icon, size: 13, color: theme.colorScheme.mutedForeground),
         const SizedBox(width: 4),
-        Text(label, style: theme.textTheme.muted.copyWith(fontSize: 13)),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.muted.copyWith(fontSize: 13),
+          ),
+        ),
       ],
     );
   }

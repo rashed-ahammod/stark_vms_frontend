@@ -5,14 +5,25 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 import '../config/api_config.dart';
+import '../config/app_colors.dart';
+import '../models/auth_models.dart';
 import '../models/vehicle.dart';
 import '../providers/auth_providers.dart';
 import '../providers/vehicle_providers.dart';
 import '../repositories/vehicle_repository.dart';
+import '../widgets/state_message_card.dart';
+import '../widgets/user_menu.dart';
 import '../widgets/vehicle_delete_dialog.dart';
 import '../widgets/vehicle_detail_sheet.dart';
 import '../widgets/vehicle_row_card.dart';
 import 'vehicle_form_screen.dart';
+
+/// Width at or above which the list renders as an aligned table.
+const double _kTableBreakpoint = 960;
+
+/// Shared horizontal rhythm: the content column and every row use this.
+const double _kContentMaxWidth = 1200;
+const double _kGutter = 24;
 
 class VehicleListScreen extends ConsumerStatefulWidget {
   const VehicleListScreen({super.key});
@@ -56,7 +67,9 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
       size: ApiConfig.defaultPageSize,
     );
     _hasNextPage = response.hasNext;
-    ref.read(totalVehiclesCountProvider.notifier).setCount(response.totalElements);
+    ref
+        .read(totalVehiclesCountProvider.notifier)
+        .setCount(response.totalElements);
     return response.content;
   }
 
@@ -66,6 +79,8 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
     _pagingController.dispose();
     super.dispose();
   }
+
+  bool get _hasActiveFilter => _searchQuery.isNotEmpty || _statusFilter != null;
 
   bool _matchesFilter(Vehicle vehicle) {
     if (_statusFilter != null && vehicle.status != _statusFilter) {
@@ -148,18 +163,16 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
     final totalCount = ref.watch(totalVehiclesCountProvider);
-    final isWide = MediaQuery.sizeOf(context).width >= 960;
+    final isTable = MediaQuery.sizeOf(context).width >= _kTableBreakpoint;
     final currentUser = ref.watch(authProvider).user;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppSurface.page,
       body: Column(
         children: [
           _TopAdminBar(
-            totalCount: totalCount,
-            userName: currentUser?.displayName,
+            user: currentUser,
             onRefresh: _pagingController.refresh,
             onAddVehicle: () => _openForm(),
             onLogout: _logout,
@@ -167,118 +180,158 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
           Expanded(
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1200),
+                constraints: const BoxConstraints(maxWidth: _kContentMaxWidth),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                  padding: const EdgeInsets.fromLTRB(
+                    _kGutter,
+                    20,
+                    _kGutter,
+                    16,
+                  ),
                   child: PagingListener<int, Vehicle>(
                     controller: _pagingController,
                     builder: (context, state, fetchNextPage) {
-                      final loadedItems = state.items ?? const <Vehicle>[];
-                      final hasActiveFilter =
-                          _searchQuery.isNotEmpty || _statusFilter != null;
+                      final loaded = state.items ?? const <Vehicle>[];
+
+                      // Filtering the paging state itself, rather than hiding
+                      // rows in the item builder, so no separators are drawn
+                      // for invisible items.
+                      final visibleState = _hasActiveFilter
+                          ? state.copyWith(
+                              pages: state.pages
+                                  ?.map((p) => p.where(_matchesFilter).toList())
+                                  .toList(),
+                            )
+                          : state;
+                      final visibleCount = visibleState.items?.length ?? 0;
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           if (totalCount != null) ...[
-                            _FleetSummaryStrip(
+                            _FleetKpiRow(
                               totalCount: totalCount,
-                              loadedVehicles: loadedItems,
+                              loadedVehicles: loaded,
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 18),
                           ],
                           _FilterToolbar(
                             searchController: _searchController,
                             searchQuery: _searchQuery,
                             statusFilter: _statusFilter,
+                            resultLabel: _buildResultLabel(
+                              visibleCount: visibleCount,
+                              loadedCount: loaded.length,
+                              totalCount: totalCount,
+                            ),
                             onSearchChanged: (value) =>
                                 setState(() => _searchQuery = value.trim()),
                             onStatusChanged: (status) =>
                                 setState(() => _statusFilter = status),
                             onClear: _clearFilters,
                           ),
-                          const SizedBox(height: 16),
-                          if (isWide) const _TableHeaderRow(),
-                          if (isWide) const SizedBox(height: 8),
+                          const SizedBox(height: 14),
+                          if (isTable) ...[
+                            const _TableHeaderRow(),
+                            const SizedBox(height: 6),
+                          ],
                           Expanded(
                             child: PagedListView<int, Vehicle>.separated(
-                              state: state,
+                              state: visibleState,
                               fetchNextPage: fetchNextPage,
                               separatorBuilder: (_, _) =>
                                   const SizedBox(height: 8),
                               builderDelegate:
                                   PagedChildBuilderDelegate<Vehicle>(
-                                itemBuilder: (context, vehicle, index) {
-                                  if (!_matchesFilter(vehicle)) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  return VehicleRowCard(
-                                    vehicle: vehicle,
-                                    onTap: () => showVehicleDetailSheet(
-                                      context: context,
-                                      vehicle: vehicle,
-                                      onEdit: () => _openForm(vehicle: vehicle),
-                                      onDelete: () =>
-                                          _confirmAndDelete(vehicle),
-                                    ),
-                                    onEdit: () => _openForm(vehicle: vehicle),
-                                    onDelete: () => _confirmAndDelete(vehicle),
-                                  );
-                                },
-                                firstPageProgressIndicatorBuilder: (_) =>
-                                    const _FirstPageSkeletonList(),
-                                newPageProgressIndicatorBuilder: (_) =>
-                                    Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Skeletonizer(
-                                    enabled: true,
-                                    child: VehicleRowCard(
-                                      vehicle:
-                                          VehicleRowCard.placeholderVehicle,
-                                      onEdit: () {},
-                                      onDelete: () {},
-                                    ),
+                                    itemBuilder: (context, vehicle, index) {
+                                      return VehicleRowCard(
+                                        vehicle: vehicle,
+                                        onTap: () => showVehicleDetailSheet(
+                                          context: context,
+                                          vehicle: vehicle,
+                                          onEdit: () =>
+                                              _openForm(vehicle: vehicle),
+                                          onDelete: () =>
+                                              _confirmAndDelete(vehicle),
+                                        ),
+                                        onEdit: () =>
+                                            _openForm(vehicle: vehicle),
+                                        onDelete: () =>
+                                            _confirmAndDelete(vehicle),
+                                      );
+                                    },
+                                    firstPageProgressIndicatorBuilder: (_) =>
+                                        const _FirstPageSkeletonList(),
+                                    newPageProgressIndicatorBuilder: (_) =>
+                                        const Padding(
+                                          padding: EdgeInsets.only(top: 4),
+                                          child: Skeletonizer(
+                                            child: VehicleRowCard(
+                                              vehicle: VehicleRowCard
+                                                  .placeholderVehicle,
+                                              onEdit: _noop,
+                                              onDelete: _noop,
+                                            ),
+                                          ),
+                                        ),
+                                    firstPageErrorIndicatorBuilder: (_) =>
+                                        StateMessageCard(
+                                          icon: LucideIcons.wifiOff,
+                                          tone: StateTone.destructive,
+                                          title: 'Could not load vehicles',
+                                          message: _errorMessage(state.error),
+                                          actions: [
+                                            ShadButton(
+                                              onPressed:
+                                                  _pagingController.refresh,
+                                              leading: const Icon(
+                                                LucideIcons.refreshCw,
+                                                size: 15,
+                                              ),
+                                              child: const Text('Retry'),
+                                            ),
+                                          ],
+                                        ),
+                                    newPageErrorIndicatorBuilder: (_) =>
+                                        _NewPageErrorBanner(
+                                          error: state.error,
+                                          onRetry: fetchNextPage,
+                                        ),
+                                    noItemsFoundIndicatorBuilder: (_) =>
+                                        _hasActiveFilter
+                                        ? StateMessageCard(
+                                            icon: LucideIcons.searchX,
+                                            title: 'No matching vehicles',
+                                            message:
+                                                'No loaded vehicle matches your search or status filter.',
+                                            actions: [
+                                              ShadButton.outline(
+                                                onPressed: _clearFilters,
+                                                child: const Text(
+                                                  'Clear filters',
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        : StateMessageCard(
+                                            icon: LucideIcons.car,
+                                            title: 'No vehicles registered yet',
+                                            message:
+                                                'Get started by adding the first vehicle to the Stark Group fleet.',
+                                            actions: [
+                                              ShadButton(
+                                                onPressed: () => _openForm(),
+                                                leading: const Icon(
+                                                  LucideIcons.plus,
+                                                  size: 16,
+                                                ),
+                                                child: const Text(
+                                                  'Add Vehicle',
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                   ),
-                                ),
-                                firstPageErrorIndicatorBuilder: (_) =>
-                                    _ErrorStateCard(
-                                  error: state.error,
-                                  onRetry: _pagingController.refresh,
-                                ),
-                                newPageErrorIndicatorBuilder: (_) =>
-                                    _NewPageErrorBanner(
-                                  error: state.error,
-                                  onRetry: fetchNextPage,
-                                ),
-                                noItemsFoundIndicatorBuilder: (_) =>
-                                    _EmptyStateCard(
-                                  onAddVehicle: () => _openForm(),
-                                ),
-                                noMoreItemsIndicatorBuilder: (_) {
-                                  final visibleCount = loadedItems
-                                      .where(_matchesFilter)
-                                      .length;
-                                  if (hasActiveFilter && visibleCount == 0) {
-                                    return _FilteredEmptyCard(
-                                      onClear: _clearFilters,
-                                    );
-                                  }
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 16,
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        hasActiveFilter
-                                            ? 'Showing $visibleCount matching vehicles (from ${loadedItems.length} loaded)'
-                                            : 'All ${loadedItems.length} vehicles loaded',
-                                        style: theme.textTheme.muted
-                                            .copyWith(fontSize: 12),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
                             ),
                           ),
                         ],
@@ -293,19 +346,41 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
       ),
     );
   }
+
+  static void _noop() {}
+
+  static String _errorMessage(Object? error) {
+    if (error is VehicleApiException) return error.message;
+    return 'Unable to load vehicles. Please check that the backend server is running.';
+  }
+
+  /// One line describing what the list is currently showing, so the filter row
+  /// explains its own effect instead of leaving the user to count rows.
+  String _buildResultLabel({
+    required int visibleCount,
+    required int loadedCount,
+    required int? totalCount,
+  }) {
+    if (totalCount == null) return '';
+    if (_hasActiveFilter) {
+      return 'Showing $visibleCount of $loadedCount loaded';
+    }
+    if (loadedCount >= totalCount) {
+      return '$totalCount ${totalCount == 1 ? 'vehicle' : 'vehicles'}';
+    }
+    return 'Showing $loadedCount of $totalCount';
+  }
 }
 
 class _TopAdminBar extends StatelessWidget {
   const _TopAdminBar({
-    required this.totalCount,
-    required this.userName,
+    required this.user,
     required this.onRefresh,
     required this.onAddVehicle,
     required this.onLogout,
   });
 
-  final int? totalCount;
-  final String? userName;
+  final AuthUser? user;
   final VoidCallback onRefresh;
   final VoidCallback onAddVehicle;
   final VoidCallback onLogout;
@@ -313,119 +388,97 @@ class _TopAdminBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final isCompact = MediaQuery.sizeOf(context).width < 640;
+    final width = MediaQuery.sizeOf(context).width;
+    final isCompact = width < 640;
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: theme.colorScheme.card,
-        border: Border(
-          bottom: BorderSide(color: theme.colorScheme.border),
-        ),
+        border: Border(bottom: BorderSide(color: theme.colorScheme.border)),
       ),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
+          constraints: const BoxConstraints(maxWidth: _kContentMaxWidth),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            child: Wrap(
-              spacing: 16,
-              runSpacing: 12,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            padding: const EdgeInsets.symmetric(
+              horizontal: _kGutter,
+              vertical: 14,
+            ),
+            child: Row(
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(
-                        LucideIcons.truck,
-                        size: 20,
-                        color: theme.colorScheme.primaryForeground,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 10,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                'Stark Group VMS',
-                                style: theme.textTheme.h4.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              if (totalCount != null)
-                                ShadBadge.secondary(
-                                  child: Text('$totalCount total'),
-                                ),
-                            ],
-                          ),
-                          if (!isCompact)
-                            Text(
-                              'Fleet registry, driver assignment, and operational status',
-                              style:
-                                  theme.textTheme.muted.copyWith(fontSize: 13),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
+                Container(
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    LucideIcons.truck,
+                    size: 19,
+                    color: theme.colorScheme.primaryForeground,
+                  ),
                 ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ShadButton.outline(
-                      onPressed: onRefresh,
-                      leading: const Icon(LucideIcons.refreshCw, size: 15),
-                      child: const Text('Refresh'),
-                    ),
-                    const SizedBox(width: 10),
-                    ShadButton(
-                      onPressed: onAddVehicle,
-                      leading: const Icon(LucideIcons.plus, size: 16),
-                      child: const Text('Add Vehicle'),
-                    ),
-                    if (userName != null && !isCompact) ...[
-                      const SizedBox(width: 12),
-                      const SizedBox(
-                        height: 24,
-                        child: ShadSeparator.vertical(
-                          margin: EdgeInsets.zero,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Icon(
-                        LucideIcons.circleUserRound,
-                        size: 16,
-                        color: theme.colorScheme.mutedForeground,
-                      ),
-                      const SizedBox(width: 6),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        userName!,
-                        style: theme.textTheme.muted.copyWith(fontSize: 13),
+                        'Stark Group VMS',
+                        style: theme.textTheme.large.copyWith(
+                          fontWeight: FontWeight.w700,
+                          height: 1.2,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
+                      if (!isCompact)
+                        Text(
+                          'Fleet registry, driver assignment and operational status',
+                          style: theme.textTheme.muted.copyWith(fontSize: 12.5),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                     ],
-                    const SizedBox(width: 8),
-                    ShadTooltip(
-                      builder: (_) => const Text('Sign out'),
-                      child: ShadIconButton.ghost(
-                        onPressed: onLogout,
-                        icon: const Icon(LucideIcons.logOut, size: 16),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
+                const SizedBox(width: 16),
+                // Actions, in increasing order of prominence.
+                if (isCompact)
+                  ShadTooltip(
+                    builder: (_) => const Text('Refresh'),
+                    child: ShadIconButton.outline(
+                      onPressed: onRefresh,
+                      icon: const Icon(LucideIcons.refreshCw, size: 15),
+                    ),
+                  )
+                else
+                  ShadButton.outline(
+                    onPressed: onRefresh,
+                    leading: const Icon(LucideIcons.refreshCw, size: 15),
+                    child: const Text('Refresh'),
+                  ),
+                const SizedBox(width: 10),
+                if (isCompact)
+                  ShadTooltip(
+                    builder: (_) => const Text('Add vehicle'),
+                    child: ShadIconButton(
+                      onPressed: onAddVehicle,
+                      icon: const Icon(LucideIcons.plus, size: 16),
+                    ),
+                  )
+                else
+                  ShadButton(
+                    onPressed: onAddVehicle,
+                    leading: const Icon(LucideIcons.plus, size: 16),
+                    child: const Text('Add Vehicle'),
+                  ),
+                if (user != null) ...[
+                  const SizedBox(width: 10),
+                  UserMenu(user: user!, onLogout: onLogout),
+                ],
               ],
             ),
           ),
@@ -435,80 +488,90 @@ class _TopAdminBar extends StatelessWidget {
   }
 }
 
-class _FleetSummaryStrip extends StatelessWidget {
-  const _FleetSummaryStrip({
-    required this.totalCount,
-    required this.loadedVehicles,
-  });
+/// Row of stat tiles summarising the fleet.
+///
+/// `totalCount` is authoritative (the server reports it); the per-status counts
+/// can only describe the pages loaded so far, because the API exposes no
+/// aggregate or filter endpoint. Each tile says which it is showing rather than
+/// implying a fleet-wide number.
+class _FleetKpiRow extends StatelessWidget {
+  const _FleetKpiRow({required this.totalCount, required this.loadedVehicles});
 
   final int totalCount;
   final List<Vehicle> loadedVehicles;
 
+  int _countOf(VehicleStatus status) =>
+      loadedVehicles.where((v) => v.status == status).length;
+
   @override
   Widget build(BuildContext context) {
-    final availableCount = loadedVehicles
-        .where((v) => v.status == VehicleStatus.available)
-        .length;
-    final inUseCount =
-        loadedVehicles.where((v) => v.status == VehicleStatus.inUse).length;
-    final maintenanceCount = loadedVehicles
-        .where((v) => v.status == VehicleStatus.maintenance)
-        .length;
+    final loaded = loadedVehicles.length;
+
+    final tiles = <Widget>[
+      _StatTile(
+        label: 'Total fleet',
+        value: totalCount,
+        icon: LucideIcons.layers,
+        // Neutral slate: the total is not a status.
+        track: const Color(0xFFE2E8F0),
+        fill: AppSurface.ink,
+        iconTint: const Color(0xFFF1F5F9),
+        share: totalCount == 0 ? 0 : loaded / totalCount,
+        caption: loaded >= totalCount
+            ? 'All records loaded'
+            : '$loaded loaded so far',
+      ),
+      for (final status in const [
+        VehicleStatus.available,
+        VehicleStatus.inUse,
+        VehicleStatus.maintenance,
+      ])
+        _StatTile(
+          label: switch (status) {
+            VehicleStatus.available => 'Available',
+            VehicleStatus.inUse => 'In use',
+            VehicleStatus.maintenance => 'Maintenance',
+            VehicleStatus.inactive => 'Inactive',
+          },
+          value: _countOf(status),
+          icon: switch (status) {
+            VehicleStatus.available => LucideIcons.circleCheck,
+            VehicleStatus.inUse => LucideIcons.navigation,
+            VehicleStatus.maintenance => LucideIcons.wrench,
+            VehicleStatus.inactive => LucideIcons.circleMinus,
+          },
+          // Meter track is a lighter step of the fill's own hue.
+          track: StatusPalette.of(status).background,
+          fill: StatusPalette.of(status).accent,
+          iconTint: StatusPalette.of(status).background,
+          iconColor: StatusPalette.of(status).foreground,
+          share: loaded == 0 ? 0 : _countOf(status) / loaded,
+          caption: loaded == 0
+              ? 'No rows loaded'
+              : 'of $loaded loaded',
+        ),
+    ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isNarrow = constraints.maxWidth < 700;
-        final cards = [
-          _KpiCard(
-            label: 'Total Fleet',
-            value: '$totalCount',
-            subtitle: '${loadedVehicles.length} loaded',
-            icon: LucideIcons.layers,
-            accentColor: const Color(0xFF0F172A),
-          ),
-          _KpiCard(
-            label: 'Available',
-            value: '$availableCount',
-            subtitle: 'In loaded pages',
-            icon: LucideIcons.circleCheck,
-            accentColor: const Color(0xFF027A48),
-          ),
-          _KpiCard(
-            label: 'In Use',
-            value: '$inUseCount',
-            subtitle: 'Active assignments',
-            icon: LucideIcons.navigation,
-            accentColor: const Color(0xFF175CD3),
-          ),
-          _KpiCard(
-            label: 'Maintenance',
-            value: '$maintenanceCount',
-            subtitle: 'In service bay',
-            icon: LucideIcons.wrench,
-            accentColor: const Color(0xFFB54708),
-          ),
-        ];
-
-        if (isNarrow) {
+        // Two per row once four across would squeeze the numbers.
+        if (constraints.maxWidth < 760) {
+          const gap = 10.0;
+          final cardWidth = (constraints.maxWidth - gap) / 2;
           return Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: cards
-                .map(
-                  (c) => SizedBox(
-                    width: (constraints.maxWidth - 10) / 2,
-                    child: c,
-                  ),
-                )
-                .toList(),
+            spacing: gap,
+            runSpacing: gap,
+            children: [
+              for (final tile in tiles)
+                SizedBox(width: cardWidth, child: tile),
+            ],
           );
         }
-
         return Row(
           children: [
-            for (int i = 0; i < cards.length; i++) ...[
-              Expanded(child: cards[i]),
-              if (i < cards.length - 1) const SizedBox(width: 12),
+            for (int i = 0; i < tiles.length; i++) ...[
+              Expanded(child: tiles[i]),
+              if (i < tiles.length - 1) const SizedBox(width: 12),
             ],
           ],
         );
@@ -517,76 +580,98 @@ class _FleetSummaryStrip extends StatelessWidget {
   }
 }
 
-class _KpiCard extends StatelessWidget {
-  const _KpiCard({
+/// A single stat tile: label, value, thin share meter, caption.
+///
+/// All four tiles share this structure so the row lines up on one grid and the
+/// cards are the same height whatever the numbers are.
+class _StatTile extends StatelessWidget {
+  const _StatTile({
     required this.label,
     required this.value,
-    required this.subtitle,
     required this.icon,
-    required this.accentColor,
+    required this.track,
+    required this.fill,
+    required this.iconTint,
+    required this.share,
+    required this.caption,
+    this.iconColor,
   });
 
   final String label;
-  final String value;
-  final String subtitle;
+  final int value;
   final IconData icon;
-  final Color accentColor;
+  final Color track;
+  final Color fill;
+  final Color iconTint;
+  final Color? iconColor;
+
+  /// 0..1 portion of the meter that is filled.
+  final double share;
+  final String caption;
 
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 15),
       decoration: BoxDecoration(
         color: theme.colorScheme.card,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: theme.colorScheme.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, size: 18, color: accentColor),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              Expanded(
+                child: Text(
                   label,
                   style: theme.textTheme.muted.copyWith(
-                    fontSize: 12,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w500,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 2),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(
-                      value,
-                      style: theme.textTheme.h4.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        subtitle,
-                        style: theme.textTheme.muted.copyWith(fontSize: 11),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+              ),
+              const SizedBox(width: 8),
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: iconTint,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-              ],
+                child: Icon(icon, size: 15, color: iconColor ?? fill),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Value stays in the text token - the colour lives on the icon and
+          // the meter, never on the number.
+          Text(
+            '$value',
+            style: theme.textTheme.h3.copyWith(
+              fontWeight: FontWeight.w700,
+              height: 1.1,
             ),
+          ),
+          const SizedBox(height: 12),
+          ShadProgress(
+            value: share.clamp(0.0, 1.0),
+            minHeight: 6,
+            backgroundColor: track,
+            color: fill,
+            borderRadius: BorderRadius.circular(999),
+            innerBorderRadius: BorderRadius.circular(999),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            caption,
+            style: theme.textTheme.muted.copyWith(fontSize: 11.5),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -594,11 +679,14 @@ class _KpiCard extends StatelessWidget {
   }
 }
 
+/// The single filter row. It scopes the list beneath it; the stat tiles above
+/// describe the whole loaded set and deliberately stay outside its scope.
 class _FilterToolbar extends StatelessWidget {
   const _FilterToolbar({
     required this.searchController,
     required this.searchQuery,
     required this.statusFilter,
+    required this.resultLabel,
     required this.onSearchChanged,
     required this.onStatusChanged,
     required this.onClear,
@@ -607,6 +695,7 @@ class _FilterToolbar extends StatelessWidget {
   final TextEditingController searchController;
   final String searchQuery;
   final VehicleStatus? statusFilter;
+  final String resultLabel;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<VehicleStatus?> onStatusChanged;
   final VoidCallback onClear;
@@ -616,70 +705,105 @@ class _FilterToolbar extends StatelessWidget {
     final theme = ShadTheme.of(context);
     final hasFilter = searchQuery.isNotEmpty || statusFilter != null;
 
-    return Wrap(
-      spacing: 12,
-      runSpacing: 10,
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        SizedBox(
-          width: 340,
-          child: ShadInput(
-            controller: searchController,
-            placeholder: const Text(
-              'Search plate, brand, model, or driver...',
-            ),
-            leading: Padding(
-              padding: const EdgeInsets.only(right: 6),
+    final search = ShadInput(
+      controller: searchController,
+      placeholder: const Text('Search plate, brand, model, or driver'),
+      leading: Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: Icon(
+          LucideIcons.search,
+          size: 15,
+          color: theme.colorScheme.mutedForeground,
+        ),
+      ),
+      trailing: searchQuery.isNotEmpty
+          ? GestureDetector(
+              onTap: () {
+                searchController.clear();
+                onSearchChanged('');
+              },
               child: Icon(
-                LucideIcons.search,
+                LucideIcons.x,
                 size: 15,
                 color: theme.colorScheme.mutedForeground,
               ),
-            ),
-            trailing: searchQuery.isNotEmpty
-                ? GestureDetector(
-                    onTap: () {
-                      searchController.clear();
-                      onSearchChanged('');
-                    },
-                    child: Icon(
-                      LucideIcons.x,
-                      size: 15,
-                      color: theme.colorScheme.mutedForeground,
-                    ),
-                  )
-                : null,
-            onChanged: onSearchChanged,
+            )
+          : null,
+      onChanged: onSearchChanged,
+    );
+
+    final pills = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _StatusFilterPill(
+          label: 'All',
+          selected: statusFilter == null,
+          onTap: () => onStatusChanged(null),
+        ),
+        for (final status in VehicleStatus.values)
+          _StatusFilterPill(
+            label: status.label,
+            selected: statusFilter == status,
+            onTap: () =>
+                onStatusChanged(statusFilter == status ? null : status),
           ),
-        ),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            _StatusFilterPill(
-              label: 'All',
-              selected: statusFilter == null,
-              onTap: () => onStatusChanged(null),
-            ),
-            for (final status in VehicleStatus.values)
-              _StatusFilterPill(
-                label: status.label,
-                selected: statusFilter == status,
-                onTap: () => onStatusChanged(
-                  statusFilter == status ? null : status,
-                ),
-              ),
-            if (hasFilter)
-              ShadButton.ghost(
-                size: ShadButtonSize.sm,
-                onPressed: onClear,
-                child: const Text('Reset'),
-              ),
-          ],
-        ),
       ],
+    );
+
+    final trailing = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (resultLabel.isNotEmpty)
+          Flexible(
+            child: Text(
+              resultLabel,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.muted.copyWith(fontSize: 12.5),
+            ),
+          ),
+        if (hasFilter) ...[
+          const SizedBox(width: 8),
+          ShadButton.ghost(
+            size: ShadButtonSize.sm,
+            onPressed: onClear,
+            leading: const Icon(LucideIcons.x, size: 14),
+            child: const Text('Reset'),
+          ),
+        ],
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 900) {
+          // Stacked: the pills can wrap to several lines here, and a result
+          // label floating beside that block reads as detached, so it gets its
+          // own line underneath.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              search,
+              const SizedBox(height: 10),
+              pills,
+              if (resultLabel.isNotEmpty || hasFilter) ...[
+                const SizedBox(height: 10),
+                Row(children: [trailing]),
+              ],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            SizedBox(width: 320, child: search),
+            const SizedBox(width: 14),
+            Expanded(child: pills),
+            const SizedBox(width: 14),
+            trailing,
+          ],
+        );
+      },
     );
   }
 }
@@ -712,6 +836,10 @@ class _StatusFilterPill extends StatelessWidget {
   }
 }
 
+/// Column headings for the table layout.
+///
+/// The flex values and the trailing fixed width must stay in step with
+/// [VehicleRowCard]'s desktop row, or the columns drift apart.
 class _TableHeaderRow extends StatelessWidget {
   const _TableHeaderRow();
 
@@ -738,18 +866,12 @@ class _TableHeaderRow extends StatelessWidget {
             child: Text('MAKE / MODEL / SPECS', style: headerStyle),
           ),
           const SizedBox(width: 16),
-          Expanded(
-            flex: 2,
-            child: Text('FUEL & CAPACITY', style: headerStyle),
-          ),
+          Expanded(flex: 2, child: Text('FUEL & CAPACITY', style: headerStyle)),
           const SizedBox(width: 16),
-          Expanded(
-            flex: 3,
-            child: Text('ASSIGNED DRIVER', style: headerStyle),
-          ),
+          Expanded(flex: 3, child: Text('ASSIGNED DRIVER', style: headerStyle)),
           const SizedBox(width: 12),
           SizedBox(
-            width: 84,
+            width: kVehicleActionsColumnWidth,
             child: Text(
               'ACTIONS',
               style: headerStyle,
@@ -768,7 +890,6 @@ class _FirstPageSkeletonList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Skeletonizer(
-      enabled: true,
       child: Column(
         children: List.generate(
           5,
@@ -776,8 +897,8 @@ class _FirstPageSkeletonList extends StatelessWidget {
             padding: EdgeInsets.only(bottom: index == 4 ? 0 : 8),
             child: VehicleRowCard(
               vehicle: VehicleRowCard.placeholderVehicle,
-              onEdit: () {},
-              onDelete: () {},
+              onEdit: _VehicleListScreenState._noop,
+              onDelete: _VehicleListScreenState._noop,
             ),
           ),
         ),
@@ -786,176 +907,8 @@ class _FirstPageSkeletonList extends StatelessWidget {
   }
 }
 
-class _EmptyStateCard extends StatelessWidget {
-  const _EmptyStateCard({required this.onAddVehicle});
-
-  final VoidCallback onAddVehicle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: ShadCard(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.secondary,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  LucideIcons.car,
-                  size: 28,
-                  color: theme.colorScheme.mutedForeground,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'No vehicles registered yet',
-                style: theme.textTheme.h4,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Get started by adding the first vehicle to the Stark Group fleet.',
-                style: theme.textTheme.muted,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              ShadButton(
-                onPressed: onAddVehicle,
-                leading: const Icon(LucideIcons.plus, size: 16),
-                child: const Text('Add Vehicle'),
-              ),
-            ],
-          ),
-        ),
-      ),
-      ),
-    );
-  }
-}
-
-class _FilteredEmptyCard extends StatelessWidget {
-  const _FilteredEmptyCard({required this.onClear});
-
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: ShadCard(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                LucideIcons.searchX,
-                size: 28,
-                color: theme.colorScheme.mutedForeground,
-              ),
-              const SizedBox(height: 12),
-              Text('No matching vehicles', style: theme.textTheme.h4),
-              const SizedBox(height: 6),
-              Text(
-                'Try clearing your search or status filter.',
-                style: theme.textTheme.muted,
-              ),
-              const SizedBox(height: 16),
-              ShadButton.outline(
-                onPressed: onClear,
-                child: const Text('Clear filters'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorStateCard extends StatelessWidget {
-  const _ErrorStateCard({
-    required this.error,
-    required this.onRetry,
-  });
-
-  final Object? error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = ShadTheme.of(context);
-    final message = error is VehicleApiException
-        ? (error as VehicleApiException).message
-        : 'Unable to load vehicles. Please check that the backend server is running.';
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: ShadCard(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.destructive.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  LucideIcons.wifiOff,
-                  size: 28,
-                  color: theme.colorScheme.destructive,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Could not load vehicles',
-                style: theme.textTheme.h4,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                message,
-                style: theme.textTheme.muted,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              ShadButton(
-                onPressed: onRetry,
-                leading: const Icon(LucideIcons.refreshCw, size: 15),
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      ),
-      ),
-    );
-  }
-}
-
 class _NewPageErrorBanner extends StatelessWidget {
-  const _NewPageErrorBanner({
-    required this.error,
-    required this.onRetry,
-  });
+  const _NewPageErrorBanner({required this.error, required this.onRetry});
 
   final Object? error;
   final VoidCallback onRetry;
