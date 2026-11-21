@@ -6,6 +6,7 @@ import 'package:skeletonizer/skeletonizer.dart';
 
 import '../config/api_config.dart';
 import '../models/vehicle.dart';
+import '../providers/auth_providers.dart';
 import '../providers/vehicle_providers.dart';
 import '../repositories/vehicle_repository.dart';
 import '../widgets/vehicle_delete_dialog.dart';
@@ -131,6 +132,12 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
     }
   }
 
+  Future<void> _logout() async {
+    await ref.read(authProvider.notifier).logout();
+    // AuthGate watches the session, so clearing it returns to the login
+    // screen without navigating from here.
+  }
+
   void _clearFilters() {
     _searchController.clear();
     setState(() {
@@ -144,6 +151,7 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
     final theme = ShadTheme.of(context);
     final totalCount = ref.watch(totalVehiclesCountProvider);
     final isWide = MediaQuery.sizeOf(context).width >= 960;
+    final currentUser = ref.watch(authProvider).user;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -151,8 +159,10 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
         children: [
           _TopAdminBar(
             totalCount: totalCount,
+            userName: currentUser?.displayName,
             onRefresh: _pagingController.refresh,
             onAddVehicle: () => _openForm(),
+            onLogout: _logout,
           ),
           Expanded(
             child: Center(
@@ -288,13 +298,17 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
 class _TopAdminBar extends StatelessWidget {
   const _TopAdminBar({
     required this.totalCount,
+    required this.userName,
     required this.onRefresh,
     required this.onAddVehicle,
+    required this.onLogout,
   });
 
   final int? totalCount;
+  final String? userName;
   final VoidCallback onRefresh;
   final VoidCallback onAddVehicle;
+  final VoidCallback onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -381,6 +395,34 @@ class _TopAdminBar extends StatelessWidget {
                       onPressed: onAddVehicle,
                       leading: const Icon(LucideIcons.plus, size: 16),
                       child: const Text('Add Vehicle'),
+                    ),
+                    if (userName != null && !isCompact) ...[
+                      const SizedBox(width: 12),
+                      const SizedBox(
+                        height: 24,
+                        child: ShadSeparator.vertical(
+                          margin: EdgeInsets.zero,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        LucideIcons.circleUserRound,
+                        size: 16,
+                        color: theme.colorScheme.mutedForeground,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        userName!,
+                        style: theme.textTheme.muted.copyWith(fontSize: 13),
+                      ),
+                    ],
+                    const SizedBox(width: 8),
+                    ShadTooltip(
+                      builder: (_) => const Text('Sign out'),
+                      child: ShadIconButton.ghost(
+                        onPressed: onLogout,
+                        icon: const Icon(LucideIcons.logOut, size: 16),
+                      ),
                     ),
                   ],
                 ),

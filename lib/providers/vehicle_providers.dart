@@ -5,9 +5,18 @@ import '../models/vehicle.dart';
 import '../network/dio_client.dart';
 import '../network/vehicle_api.dart';
 import '../repositories/vehicle_repository.dart';
+import 'auth_providers.dart';
 
 final dioProvider = Provider<Dio>((ref) {
-  final dio = createDioClient();
+  final dio = createDioClient(
+    // Read lazily on each request so the newest token is always attached.
+    readToken: () => ref.read(sessionStoreProvider).token,
+    onUnauthorized: () {
+      // Clearing the session notifies AuthNotifier, which flips the app back
+      // to the login screen. Dio never touches the auth state directly.
+      ref.read(sessionStoreProvider).clear();
+    },
+  );
   ref.onDispose(dio.close);
   return dio;
 });
