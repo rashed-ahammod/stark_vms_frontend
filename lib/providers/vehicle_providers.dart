@@ -31,8 +31,8 @@ class TotalVehiclesCountNotifier extends Notifier<int?> {
 
 final totalVehiclesCountProvider =
     NotifierProvider<TotalVehiclesCountNotifier, int?>(
-  TotalVehiclesCountNotifier.new,
-);
+      TotalVehiclesCountNotifier.new,
+    );
 
 class VehicleFormState {
   const VehicleFormState({
@@ -60,8 +60,9 @@ class VehicleFormState {
       vehicleNumberError: clearVehicleNumberError
           ? null
           : (vehicleNumberError ?? this.vehicleNumberError),
-      generalError:
-          clearGeneralError ? null : (generalError ?? this.generalError),
+      generalError: clearGeneralError
+          ? null
+          : (generalError ?? this.generalError),
       fieldErrors: fieldErrors ?? this.fieldErrors,
     );
   }
@@ -77,14 +78,19 @@ class VehicleFormNotifier extends Notifier<VehicleFormState> {
     }
   }
 
+  /// Clears the server-side error for a single field once the user edits it.
+  /// Keys match the JSON field names in the API's `errors` map.
+  void clearFieldError(String field) {
+    if (!state.fieldErrors.containsKey(field)) return;
+    final remaining = Map<String, String>.of(state.fieldErrors)..remove(field);
+    state = state.copyWith(fieldErrors: remaining);
+  }
+
   void clearErrors() {
     state = const VehicleFormState();
   }
 
-  Future<Vehicle?> submit({
-    int? existingId,
-    required Vehicle vehicle,
-  }) async {
+  Future<Vehicle?> submit({int? existingId, required Vehicle vehicle}) async {
     state = const VehicleFormState(isSubmitting: true);
 
     final repo = ref.read(vehicleRepositoryProvider);
@@ -129,5 +135,5 @@ class VehicleFormNotifier extends Notifier<VehicleFormState> {
 
 final vehicleFormProvider =
     NotifierProvider.autoDispose<VehicleFormNotifier, VehicleFormState>(
-  VehicleFormNotifier.new,
-);
+      VehicleFormNotifier.new,
+    );

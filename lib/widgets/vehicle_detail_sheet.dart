@@ -115,7 +115,7 @@ class _VehicleDetailSheet extends StatelessWidget {
                   'Color',
                   vehicle.color?.isNotEmpty == true ? vehicle.color! : '—',
                 ),
-                _DetailItem('Fuel Type', vehicle.fuelType.label),
+                _DetailItem('Fuel Type', vehicle.fuelType?.label ?? '—'),
                 _DetailItem(
                   'Seating Capacity',
                   vehicle.seatingCapacity != null

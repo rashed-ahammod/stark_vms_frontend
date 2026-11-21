@@ -5,6 +5,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../models/vehicle.dart';
 import '../providers/vehicle_providers.dart';
+import '../repositories/vehicle_repository.dart';
 
 class VehicleFormScreen extends ConsumerStatefulWidget {
   const VehicleFormScreen({super.key, this.vehicle});
@@ -32,6 +33,12 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
   FuelType? _fuelType;
   VehicleStatus _status = VehicleStatus.available;
 
+  /// Set while the authoritative record is being re-fetched via GET /vehicles/{id}.
+  bool _isLoadingVehicle = false;
+
+  /// Non-null when the edited vehicle could not be re-fetched (e.g. deleted -> 404).
+  VehicleApiException? _loadError;
+
   bool get _isEditing => widget.vehicle != null;
 
   @override
@@ -55,6 +62,60 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     _vehicleType = v?.vehicleType;
     _fuelType = v?.fuelType;
     _status = v?.status ?? VehicleStatus.available;
+
+    final editingId = v?.id;
+    if (editingId != null) {
+      _isLoadingVehicle = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadVehicle(editingId);
+      });
+    }
+  }
+
+  /// Re-fetches the vehicle so the form always edits the authoritative record.
+  /// This matters because PUT /vehicles/{id} is a full replace: every field in
+  /// the body overwrites the row, so the form must start from complete data.
+  Future<void> _loadVehicle(int id) async {
+    try {
+      final fresh = await ref
+          .read(vehicleRepositoryProvider)
+          .getVehicleById(id);
+      if (!mounted) return;
+      setState(() {
+        _isLoadingVehicle = false;
+        _loadError = null;
+        _prefillFrom(fresh);
+      });
+    } on VehicleApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingVehicle = false;
+        _loadError = e;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingVehicle = false;
+        _loadError = const VehicleApiException(
+          message: 'An unexpected error occurred while loading this vehicle.',
+        );
+      });
+    }
+  }
+
+  /// Writes [v] into every control. Call inside [setState].
+  void _prefillFrom(Vehicle v) {
+    _vehicleNumberController.text = v.vehicleNumber;
+    _brandController.text = v.brand;
+    _modelController.text = v.model;
+    _yearController.text = v.manufacturingYear?.toString() ?? '';
+    _colorController.text = v.color ?? '';
+    _seatingCapacityController.text = v.seatingCapacity?.toString() ?? '';
+    _driverNameController.text = v.driverName ?? '';
+    _driverPhoneController.text = v.driverPhone ?? '';
+    _vehicleType = v.vehicleType;
+    _fuelType = v.fuelType;
+    _status = v.status;
   }
 
   @override
@@ -74,7 +135,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     ref.read(vehicleFormProvider.notifier).clearErrors();
 
     final isValid = _formKey.currentState?.saveAndValidate() ?? false;
-    if (!isValid || _vehicleType == null || _fuelType == null) {
+    if (!isValid || _vehicleType == null) {
       return;
     }
 
@@ -91,17 +152,16 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
       model: _modelController.text.trim(),
       manufacturingYear: yearText.isEmpty ? null : int.parse(yearText),
       color: colorText.isEmpty ? null : colorText,
-      fuelType: _fuelType!,
+      fuelType: _fuelType,
       seatingCapacity: seatsText.isEmpty ? null : int.parse(seatsText),
       driverName: driverNameText.isEmpty ? null : driverNameText,
       driverPhone: driverPhoneText.isEmpty ? null : driverPhoneText,
       status: _status,
     );
 
-    final saved = await ref.read(vehicleFormProvider.notifier).submit(
-          existingId: widget.vehicle?.id,
-          vehicle: payload,
-        );
+    final saved = await ref
+        .read(vehicleFormProvider.notifier)
+        .submit(existingId: widget.vehicle?.id, vehicle: payload);
 
     if (saved != null && mounted) {
       ShadToaster.of(context).show(
@@ -168,8 +228,9 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                               _isEditing
                                   ? 'Update registration, specs, and assignment for ${widget.vehicle!.vehicleNumber}'
                                   : 'Register a new vehicle in the Stark Group fleet',
-                              style:
-                                  theme.textTheme.muted.copyWith(fontSize: 13),
+                              style: theme.textTheme.muted.copyWith(
+                                fontSize: 13,
+                              ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ],
@@ -182,324 +243,521 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
             ),
           ),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 880),
-                  child: ShadCard(
-                    padding: const EdgeInsets.all(28),
-                    child: ShadForm(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (formState.generalError != null) ...[
-                            ShadAlert.destructive(
-                              icon: const Icon(LucideIcons.circleAlert),
-                              title: const Text('Could not save vehicle'),
-                              description: Text(formState.generalError!),
-                            ),
-                            const SizedBox(height: 24),
-                          ],
-                          const _SectionHeader(
-                            icon: LucideIcons.car,
-                            title: 'Vehicle Identification & Specifications',
-                            subtitle:
-                                'Required fields are marked with an asterisk (*).',
-                          ),
-                          const SizedBox(height: 18),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadInputFormField(
-                              id: 'vehicleNumber',
-                              controller: _vehicleNumberController,
-                              label: const Text('Vehicle Number *'),
-                              placeholder:
-                                  const Text('e.g. DHA-METRO-GA-11-9001'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.hash,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
+            child: _loadError != null
+                ? _LoadErrorCard(
+                    error: _loadError!,
+                    vehicleNumber: widget.vehicle?.vehicleNumber,
+                    onRetry: () {
+                      final id = widget.vehicle?.id;
+                      if (id == null) return;
+                      setState(() {
+                        _isLoadingVehicle = true;
+                        _loadError = null;
+                      });
+                      _loadVehicle(id);
+                    },
+                    onBack: () => Navigator.of(context).pop(false),
+                  )
+                : _isLoadingVehicle
+                ? const _FormLoadingCard()
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 24,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 880),
+                        child: ShadCard(
+                          padding: const EdgeInsets.all(28),
+                          child: ShadForm(
+                            key: _formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (formState.generalError != null) ...[
+                                  ShadAlert.destructive(
+                                    icon: const Icon(LucideIcons.circleAlert),
+                                    title: const Text('Could not save vehicle'),
+                                    description: Text(formState.generalError!),
+                                  ),
+                                  const SizedBox(height: 24),
+                                ],
+                                const _SectionHeader(
+                                  icon: LucideIcons.car,
+                                  title:
+                                      'Vehicle Identification & Specifications',
+                                  subtitle: 'Required fields are marked with an asterisk (*).',
                                 ),
-                              ),
-                              forceErrorText: formState.vehicleNumberError,
-                              onChanged: (_) => ref
-                                  .read(vehicleFormProvider.notifier)
-                                  .clearVehicleNumberError(),
-                              validator: (v) {
-                                if (v.trim().isEmpty) {
-                                  return 'Vehicle number is required';
-                                }
-                                return null;
-                              },
-                            ),
-                            right: ShadSelectFormField<VehicleType>(
-                              id: 'vehicleType',
-                              label: const Text('Vehicle Type *'),
-                              initialValue: _vehicleType,
-                              placeholder: const Text('Select vehicle type'),
-                              options: VehicleType.values
-                                  .map(
-                                    (type) => ShadOption(
-                                      value: type,
-                                      child: Text(type.label),
+                                const SizedBox(height: 18),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadInputFormField(
+                                    id: 'vehicleNumber',
+                                    controller: _vehicleNumberController,
+                                    label: const Text('Vehicle Number *'),
+                                    placeholder: const Text(
+                                      'e.g. DHA-METRO-GA-11-9001',
                                     ),
-                                  )
-                                  .toList(),
-                              selectedOptionBuilder: (_, value) =>
-                                  Text(value.label),
-                              onChanged: (value) =>
-                                  setState(() => _vehicleType = value),
-                              validator: (value) {
-                                if (value == null) {
-                                  return 'Vehicle type is required';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadInputFormField(
-                              id: 'brand',
-                              controller: _brandController,
-                              label: const Text('Brand *'),
-                              placeholder: const Text('e.g. Toyota'),
-                              validator: (v) {
-                                if (v.trim().isEmpty) {
-                                  return 'Brand is required';
-                                }
-                                return null;
-                              },
-                            ),
-                            right: ShadInputFormField(
-                              id: 'model',
-                              controller: _modelController,
-                              label: const Text('Model *'),
-                              placeholder: const Text('e.g. Corolla Cross'),
-                              validator: (v) {
-                                if (v.trim().isEmpty) {
-                                  return 'Model is required';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadInputFormField(
-                              id: 'manufacturingYear',
-                              controller: _yearController,
-                              label: const Text('Manufacturing Year'),
-                              placeholder: const Text('e.g. 2023'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.calendar,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.hash,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                    forceErrorText:
+                                        formState.vehicleNumberError,
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearVehicleNumberError(),
+                                    validator: (v) {
+                                      if (v.trim().isEmpty) {
+                                        return 'Vehicle number is required';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  right: ShadSelectFormField<VehicleType>(
+                                    id: 'vehicleType',
+                                    forceErrorText:
+                                        formState.fieldErrors['vehicleType'],
+                                    label: const Text('Vehicle Type *'),
+                                    initialValue: _vehicleType,
+                                    placeholder: const Text(
+                                      'Select vehicle type',
+                                    ),
+                                    options: VehicleType.values
+                                        .map(
+                                          (type) => ShadOption(
+                                            value: type,
+                                            child: Text(type.label),
+                                          ),
+                                        )
+                                        .toList(),
+                                    selectedOptionBuilder: (_, value) =>
+                                        Text(value.label),
+                                    onChanged: (value) =>
+                                        setState(() => _vehicleType = value),
+                                    validator: (value) {
+                                      if (value == null) {
+                                        return 'Vehicle type is required';
+                                      }
+                                      return null;
+                                    },
+                                  ),
                                 ),
-                              ),
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
+                                const SizedBox(height: 16),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadInputFormField(
+                                    id: 'brand',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('brand'),
+                                    forceErrorText:
+                                        formState.fieldErrors['brand'],
+                                    controller: _brandController,
+                                    label: const Text('Brand *'),
+                                    placeholder: const Text('e.g. Toyota'),
+                                    validator: (v) {
+                                      if (v.trim().isEmpty) {
+                                        return 'Brand is required';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  right: ShadInputFormField(
+                                    id: 'model',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('model'),
+                                    forceErrorText:
+                                        formState.fieldErrors['model'],
+                                    controller: _modelController,
+                                    label: const Text('Model *'),
+                                    placeholder: const Text(
+                                      'e.g. Corolla Cross',
+                                    ),
+                                    validator: (v) {
+                                      if (v.trim().isEmpty) {
+                                        return 'Model is required';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadInputFormField(
+                                    id: 'manufacturingYear',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('manufacturingYear'),
+                                    forceErrorText: formState
+                                        .fieldErrors['manufacturingYear'],
+                                    controller: _yearController,
+                                    label: const Text('Manufacturing Year'),
+                                    placeholder: const Text('e.g. 2023'),
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.calendar,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
+                                    validator: (v) {
+                                      final trimmed = v.trim();
+                                      if (trimmed.isEmpty) return null;
+                                      final year = int.tryParse(trimmed);
+                                      if (year == null ||
+                                          year < 1900 ||
+                                          year > maxYear) {
+                                        return 'Enter a valid year between 1900 and $maxYear';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                  right: ShadInputFormField(
+                                    id: 'color',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('color'),
+                                    forceErrorText:
+                                        formState.fieldErrors['color'],
+                                    controller: _colorController,
+                                    label: const Text('Color'),
+                                    placeholder: const Text('e.g. Pearl White'),
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.palette,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadSelectFormField<FuelType>(
+                                    id: 'fuelType',
+                                    forceErrorText:
+                                        formState.fieldErrors['fuelType'],
+                                    label: const Text('Fuel Type'),
+                                    initialValue: _fuelType,
+                                    placeholder: const Text('Select fuel type'),
+                                    options: FuelType.values
+                                        .map(
+                                          (fuel) => ShadOption(
+                                            value: fuel,
+                                            child: Text(fuel.label),
+                                          ),
+                                        )
+                                        .toList(),
+                                    selectedOptionBuilder: (_, value) =>
+                                        Text(value.label),
+                                    onChanged: (value) =>
+                                        setState(() => _fuelType = value),
+                                  ),
+                                  right: ShadInputFormField(
+                                    id: 'seatingCapacity',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('seatingCapacity'),
+                                    forceErrorText: formState
+                                        .fieldErrors['seatingCapacity'],
+                                    controller: _seatingCapacityController,
+                                    label: const Text('Seating Capacity'),
+                                    placeholder: const Text('e.g. 5'),
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.users,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
+                                    validator: (v) {
+                                      final trimmed = v.trim();
+                                      if (trimmed.isEmpty) return null;
+                                      final seats = int.tryParse(trimmed);
+                                      if (seats == null || seats <= 0) {
+                                        return 'Seating capacity must be greater than 0';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 24),
+                                  child: ShadSeparator.horizontal(),
+                                ),
+                                const _SectionHeader(
+                                  icon: LucideIcons.userCheck,
+                                  title: 'Assignment & Operational Status',
+                                  subtitle: 'Assign a driver and set current fleet availability.',
+                                ),
+                                const SizedBox(height: 18),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadInputFormField(
+                                    id: 'driverName',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('driverName'),
+                                    forceErrorText:
+                                        formState.fieldErrors['driverName'],
+                                    controller: _driverNameController,
+                                    label: const Text('Driver Name'),
+                                    placeholder: const Text(
+                                      'e.g. Kamrul Hasan',
+                                    ),
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.user,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                  ),
+                                  right: ShadInputFormField(
+                                    id: 'driverPhone',
+                                    onChanged: (_) => ref
+                                        .read(vehicleFormProvider.notifier)
+                                        .clearFieldError('driverPhone'),
+                                    forceErrorText:
+                                        formState.fieldErrors['driverPhone'],
+                                    controller: _driverPhoneController,
+                                    label: const Text('Driver Phone'),
+                                    placeholder: const Text(
+                                      'e.g. +8801711000000',
+                                    ),
+                                    leading: Padding(
+                                      padding: const EdgeInsets.only(right: 6),
+                                      child: Icon(
+                                        LucideIcons.phone,
+                                        size: 15,
+                                        color:
+                                            theme.colorScheme.mutedForeground,
+                                      ),
+                                    ),
+                                    keyboardType: TextInputType.phone,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _FormPair(
+                                  isWide: isWide,
+                                  left: ShadSelectFormField<VehicleStatus>(
+                                    id: 'status',
+                                    label: const Text('Status *'),
+                                    initialValue: _status,
+                                    options: VehicleStatus.values
+                                        .map(
+                                          (status) => ShadOption(
+                                            value: status,
+                                            child: Text(status.label),
+                                          ),
+                                        )
+                                        .toList(),
+                                    selectedOptionBuilder: (_, value) =>
+                                        Text(value.label),
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        setState(() => _status = value);
+                                      }
+                                    },
+                                  ),
+                                  right: const SizedBox.shrink(),
+                                ),
+                                const SizedBox(height: 28),
+                                const ShadSeparator.horizontal(),
+                                const SizedBox(height: 20),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    ShadButton.outline(
+                                      onPressed: formState.isSubmitting
+                                          ? null
+                                          : () =>
+                                                Navigator.of(context)
+                                                    .pop(false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    ShadButton(
+                                      onPressed: formState.isSubmitting
+                                          ? null
+                                          : _submit,
+                                      leading: Icon(
+                                        _isEditing
+                                            ? LucideIcons.check
+                                            : LucideIcons.plus,
+                                        size: 15,
+                                      ),
+                                      child: Text(
+                                        formState.isSubmitting
+                                            ? 'Saving...'
+                                            : (_isEditing
+                                                  ? 'Save Changes'
+                                                  : 'Create Vehicle'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ],
-                              validator: (v) {
-                                final trimmed = v.trim();
-                                if (trimmed.isEmpty) return null;
-                                final year = int.tryParse(trimmed);
-                                if (year == null ||
-                                    year < 1900 ||
-                                    year > maxYear) {
-                                  return 'Enter a valid year between 1900 and $maxYear';
-                                }
-                                return null;
-                              },
-                            ),
-                            right: ShadInputFormField(
-                              id: 'color',
-                              controller: _colorController,
-                              label: const Text('Color'),
-                              placeholder: const Text('e.g. Pearl White'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.palette,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
-                                ),
-                              ),
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadSelectFormField<FuelType>(
-                              id: 'fuelType',
-                              label: const Text('Fuel Type *'),
-                              initialValue: _fuelType,
-                              placeholder: const Text('Select fuel type'),
-                              options: FuelType.values
-                                  .map(
-                                    (fuel) => ShadOption(
-                                      value: fuel,
-                                      child: Text(fuel.label),
-                                    ),
-                                  )
-                                  .toList(),
-                              selectedOptionBuilder: (_, value) =>
-                                  Text(value.label),
-                              onChanged: (value) =>
-                                  setState(() => _fuelType = value),
-                              validator: (value) {
-                                if (value == null) {
-                                  return 'Fuel type is required';
-                                }
-                                return null;
-                              },
-                            ),
-                            right: ShadInputFormField(
-                              id: 'seatingCapacity',
-                              controller: _seatingCapacityController,
-                              label: const Text('Seating Capacity'),
-                              placeholder: const Text('e.g. 5'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.users,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
-                                ),
-                              ),
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              validator: (v) {
-                                final trimmed = v.trim();
-                                if (trimmed.isEmpty) return null;
-                                final seats = int.tryParse(trimmed);
-                                if (seats == null || seats <= 0) {
-                                  return 'Seating capacity must be greater than 0';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 24),
-                            child: ShadSeparator.horizontal(),
-                          ),
-                          const _SectionHeader(
-                            icon: LucideIcons.userCheck,
-                            title: 'Assignment & Operational Status',
-                            subtitle:
-                                'Assign a driver and set current fleet availability.',
-                          ),
-                          const SizedBox(height: 18),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadInputFormField(
-                              id: 'driverName',
-                              controller: _driverNameController,
-                              label: const Text('Driver Name'),
-                              placeholder: const Text('e.g. Kamrul Hasan'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.user,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
-                                ),
-                              ),
-                            ),
-                            right: ShadInputFormField(
-                              id: 'driverPhone',
-                              controller: _driverPhoneController,
-                              label: const Text('Driver Phone'),
-                              placeholder: const Text('e.g. +8801711000000'),
-                              leading: Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(
-                                  LucideIcons.phone,
-                                  size: 15,
-                                  color: theme.colorScheme.mutedForeground,
-                                ),
-                              ),
-                              keyboardType: TextInputType.phone,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _FormPair(
-                            isWide: isWide,
-                            left: ShadSelectFormField<VehicleStatus>(
-                              id: 'status',
-                              label: const Text('Status *'),
-                              initialValue: _status,
-                              options: VehicleStatus.values
-                                  .map(
-                                    (status) => ShadOption(
-                                      value: status,
-                                      child: Text(status.label),
-                                    ),
-                                  )
-                                  .toList(),
-                              selectedOptionBuilder: (_, value) =>
-                                  Text(value.label),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() => _status = value);
-                                }
-                              },
-                            ),
-                            right: const SizedBox.shrink(),
-                          ),
-                          const SizedBox(height: 28),
-                          const ShadSeparator.horizontal(),
-                          const SizedBox(height: 20),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              ShadButton.outline(
-                                onPressed: formState.isSubmitting
-                                    ? null
-                                    : () => Navigator.of(context).pop(false),
-                                child: const Text('Cancel'),
-                              ),
-                              const SizedBox(width: 12),
-                              ShadButton(
-                                onPressed:
-                                    formState.isSubmitting ? null : _submit,
-                                leading: Icon(
-                                  _isEditing
-                                      ? LucideIcons.check
-                                      : LucideIcons.plus,
-                                  size: 15,
-                                ),
-                                child: Text(
-                                  formState.isSubmitting
-                                      ? 'Saving...'
-                                      : (_isEditing
-                                          ? 'Save Changes'
-                                          : 'Create Vehicle'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown while the authoritative record is fetched via GET /vehicles/{id}.
+class _FormLoadingCard extends StatelessWidget {
+  const _FormLoadingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 880),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: ShadCard(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.4),
+                ),
+                const SizedBox(height: 16),
+                Text('Loading vehicle details', style: theme.textTheme.h4),
+                const SizedBox(height: 6),
+                Text(
+                  'Fetching the latest record from the server.',
+                  style: theme.textTheme.muted,
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the edited vehicle cannot be loaded — most often a 404 because
+/// the record was deleted while the list was still on screen.
+class _LoadErrorCard extends StatelessWidget {
+  const _LoadErrorCard({
+    required this.error,
+    required this.vehicleNumber,
+    required this.onRetry,
+    required this.onBack,
+  });
+
+  final VehicleApiException error;
+  final String? vehicleNumber;
+  final VoidCallback onRetry;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    final isNotFound = error.isNotFound;
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: ShadCard(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.destructive.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isNotFound ? LucideIcons.fileX : LucideIcons.wifiOff,
+                    size: 28,
+                    color: theme.colorScheme.destructive,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  isNotFound
+                      ? 'Vehicle no longer exists'
+                      : 'Could not load vehicle',
+                  style: theme.textTheme.h4,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isNotFound
+                      ? '${vehicleNumber ?? 'This vehicle'} was not found. It may have been deleted by someone else.'
+                      : error.message,
+                  style: theme.textTheme.muted,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ShadButton.outline(
+                      onPressed: onBack,
+                      leading: const Icon(LucideIcons.arrowLeft, size: 15),
+                      child: const Text('Back to list'),
+                    ),
+                    if (!isNotFound) ...[
+                      const SizedBox(width: 12),
+                      ShadButton(
+                        onPressed: onRetry,
+                        leading: const Icon(LucideIcons.refreshCw, size: 15),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -568,10 +826,7 @@ class _FormPair extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           left,
-          if (right is! SizedBox) ...[
-            const SizedBox(height: 16),
-            right,
-          ],
+          if (right is! SizedBox) ...[const SizedBox(height: 16), right],
         ],
       );
     }

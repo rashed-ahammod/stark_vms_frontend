@@ -52,7 +52,7 @@ class Vehicle {
     required this.model,
     this.manufacturingYear,
     this.color,
-    required this.fuelType,
+    this.fuelType,
     this.seatingCapacity,
     this.driverName,
     this.driverPhone,
@@ -68,7 +68,7 @@ class Vehicle {
   final String model;
   final int? manufacturingYear;
   final String? color;
-  final FuelType fuelType;
+  final FuelType? fuelType;
   final int? seatingCapacity;
   final String? driverName;
   final String? driverPhone;

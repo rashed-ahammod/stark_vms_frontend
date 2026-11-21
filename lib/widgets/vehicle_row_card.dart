@@ -183,7 +183,14 @@ class _DesktopVehicleRow extends StatelessWidget {
                     color: theme.colorScheme.mutedForeground,
                   ),
                   const SizedBox(width: 6),
-                  Text(vehicle.fuelType.label, style: theme.textTheme.p),
+                  Text(
+                    vehicle.fuelType?.label ?? 'Not specified',
+                    style: vehicle.fuelType != null
+                        ? theme.textTheme.p
+                        : theme.textTheme.p.copyWith(
+                            color: theme.colorScheme.mutedForeground,
+                          ),
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -317,7 +324,8 @@ class _TabletVehicleRow extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             VehicleTypeBadge(type: vehicle.vehicleType),
-            _MetaChip(icon: LucideIcons.fuel, label: vehicle.fuelType.label),
+            if (vehicle.fuelType != null)
+              _MetaChip(icon: LucideIcons.fuel, label: vehicle.fuelType!.label),
             if (vehicle.manufacturingYear != null)
               _MetaChip(
                 icon: LucideIcons.calendar,
@@ -376,10 +384,7 @@ class _MetaChip extends StatelessWidget {
       children: [
         Icon(icon, size: 13, color: theme.colorScheme.mutedForeground),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: theme.textTheme.muted.copyWith(fontSize: 13),
-        ),
+        Text(label, style: theme.textTheme.muted.copyWith(fontSize: 13)),
       ],
     );
   }
