@@ -37,6 +37,13 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
   final TextEditingController _searchController = TextEditingController();
 
   bool _hasNextPage = true;
+
+  /// The rows most recently rendered.
+  ///
+  /// `PagingController.refresh()` clears the state, so without this every save
+  /// or delete would blank the list and flash skeletons. Holding the previous
+  /// rows and dimming them keeps the page still while it refetches.
+  List<Vehicle> _previousItems = const [];
   String _searchQuery = '';
   VehicleStatus? _statusFilter;
 
@@ -112,13 +119,31 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
     final id = vehicle.id;
     if (id == null) return;
 
-    final confirmed = await showVehicleDeleteDialog(context, vehicle);
-    if (confirmed != true || !mounted) return;
-
     final toaster = ShadToaster.of(context);
-    try {
-      await ref.read(vehicleRepositoryProvider).deleteVehicle(id);
-      if (!mounted) return;
+    String? failureMessage;
+
+    // The dialog drives the request so it can show progress and block a
+    // second confirm; it stays open until the call settles.
+    final deleted = await showVehicleDeleteDialog(
+      context,
+      vehicle,
+      onConfirm: () async {
+        try {
+          await ref.read(vehicleRepositoryProvider).deleteVehicle(id);
+          return true;
+        } on VehicleApiException catch (e) {
+          failureMessage = e.message;
+          return false;
+        } catch (_) {
+          failureMessage = 'An unexpected error occurred.';
+          return false;
+        }
+      },
+    );
+
+    if (!mounted) return;
+
+    if (deleted == true) {
       toaster.show(
         ShadToast(
           title: const Text('Vehicle deleted'),
@@ -128,20 +153,11 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
         ),
       );
       _pagingController.refresh();
-    } on VehicleApiException catch (e) {
-      if (!mounted) return;
+    } else if (failureMessage != null) {
       toaster.show(
         ShadToast.destructive(
           title: const Text('Failed to delete vehicle'),
-          description: Text(e.message),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      toaster.show(
-        const ShadToast.destructive(
-          title: Text('Failed to delete vehicle'),
-          description: Text('An unexpected error occurred.'),
+          description: Text(failureMessage!),
         ),
       );
     }
@@ -168,7 +184,7 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
     final currentUser = ref.watch(authProvider).user;
 
     return Scaffold(
-      backgroundColor: AppSurface.page,
+      backgroundColor: AppSurface.of(context).page,
       body: Column(
         children: [
           _TopAdminBar(
@@ -192,6 +208,11 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
                     controller: _pagingController,
                     builder: (context, state, fetchNextPage) {
                       final loaded = state.items ?? const <Vehicle>[];
+                      if (loaded.isNotEmpty) {
+                        _previousItems = loaded;
+                      }
+                      final isRefreshing =
+                          state.isLoading && _previousItems.isNotEmpty;
 
                       // Filtering the paging state itself, rather than hiding
                       // rows in the item builder, so no separators are drawn
@@ -235,6 +256,15 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
                             const _TableHeaderRow(),
                             const SizedBox(height: 6),
                           ],
+                          // Refetch shows a thin bar over the held rows rather
+                          // than replacing them, so nothing jumps.
+                          SizedBox(
+                            height: 3,
+                            child: isRefreshing
+                                ? const ShadProgress(minHeight: 3)
+                                : null,
+                          ),
+                          const SizedBox(height: 5),
                           Expanded(
                             child: PagedListView<int, Vehicle>.separated(
                               state: visibleState,
@@ -261,7 +291,11 @@ class _VehicleListScreenState extends ConsumerState<VehicleListScreen> {
                                       );
                                     },
                                     firstPageProgressIndicatorBuilder: (_) =>
-                                        const _FirstPageSkeletonList(),
+                                        _previousItems.isEmpty
+                                        ? const _FirstPageSkeletonList()
+                                        : _HeldRowsPlaceholder(
+                                            items: _previousItems,
+                                          ),
                                     newPageProgressIndicatorBuilder: (_) =>
                                         const Padding(
                                           padding: EdgeInsets.only(top: 4),
@@ -506,6 +540,7 @@ class _FleetKpiRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final loaded = loadedVehicles.length;
+    final surface = AppSurface.of(context);
 
     final tiles = <Widget>[
       _StatTile(
@@ -513,9 +548,9 @@ class _FleetKpiRow extends StatelessWidget {
         value: totalCount,
         icon: LucideIcons.layers,
         // Neutral slate: the total is not a status.
-        track: const Color(0xFFE2E8F0),
-        fill: AppSurface.ink,
-        iconTint: const Color(0xFFF1F5F9),
+        track: surface.neutralTrack,
+        fill: surface.ink,
+        iconTint: surface.neutralTint,
         share: totalCount == 0 ? 0 : loaded / totalCount,
         caption: loaded >= totalCount
             ? 'All records loaded'
@@ -541,10 +576,10 @@ class _FleetKpiRow extends StatelessWidget {
             VehicleStatus.inactive => LucideIcons.circleMinus,
           },
           // Meter track is a lighter step of the fill's own hue.
-          track: StatusPalette.of(status).background,
-          fill: StatusPalette.of(status).accent,
-          iconTint: StatusPalette.of(status).background,
-          iconColor: StatusPalette.of(status).foreground,
+          track: StatusPalette.of(context, status).background,
+          fill: StatusPalette.of(context, status).accent,
+          iconTint: StatusPalette.of(context, status).background,
+          iconColor: StatusPalette.of(context, status).foreground,
           share: loaded == 0 ? 0 : _countOf(status) / loaded,
           caption: loaded == 0
               ? 'No rows loaded'
@@ -901,6 +936,38 @@ class _FirstPageSkeletonList extends StatelessWidget {
               onDelete: _VehicleListScreenState._noop,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The previous rows, dimmed and inert, shown while a refetch is in flight.
+///
+/// This is what replaces a skeleton flash: the same content stays in place, so
+/// the list does not collapse and reflow after every save or delete.
+class _HeldRowsPlaceholder extends StatelessWidget {
+  const _HeldRowsPlaceholder({required this.items});
+
+  final List<Vehicle> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Opacity(
+        opacity: 0.45,
+        child: Column(
+          children: [
+            for (int i = 0; i < items.length; i++)
+              Padding(
+                padding: EdgeInsets.only(bottom: i == items.length - 1 ? 0 : 8),
+                child: VehicleRowCard(
+                  vehicle: items[i],
+                  onEdit: _VehicleListScreenState._noop,
+                  onDelete: _VehicleListScreenState._noop,
+                ),
+              ),
+          ],
         ),
       ),
     );

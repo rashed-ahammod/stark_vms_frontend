@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../models/auth_models.dart';
+import '../providers/theme_providers.dart';
 
 /// Initials badge + popover holding the account details and Sign out.
 ///
 /// The top bar previously carried the user icon, the name and a separate
 /// logout button inline, which left little room for the primary actions.
 /// Collapsing them into one avatar keeps the bar readable at every width.
-class UserMenu extends StatefulWidget {
+class UserMenu extends ConsumerStatefulWidget {
   const UserMenu({super.key, required this.user, required this.onLogout});
 
   final AuthUser user;
   final VoidCallback onLogout;
 
   @override
-  State<UserMenu> createState() => _UserMenuState();
+  ConsumerState<UserMenu> createState() => _UserMenuState();
 }
 
-class _UserMenuState extends State<UserMenu> {
+class _UserMenuState extends ConsumerState<UserMenu> {
   final ShadPopoverController _controller = ShadPopoverController();
 
   @override
@@ -76,6 +78,25 @@ class _UserMenuState extends State<UserMenu> {
               ),
             ),
             const ShadSeparator.horizontal(margin: EdgeInsets.zero),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+              child: Text(
+                'APPEARANCE',
+                style: theme.textTheme.muted.copyWith(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+            _AppearanceChoices(
+              selected: ref.watch(themeModeProvider),
+              onSelected: (mode) =>
+                  ref.read(themeModeProvider.notifier).setMode(mode),
+            ),
+            const SizedBox(height: 8),
+            const ShadSeparator.horizontal(margin: EdgeInsets.zero),
             const SizedBox(height: 6),
             ShadButton.ghost(
               onPressed: () {
@@ -112,6 +133,77 @@ class _UserMenuState extends State<UserMenu> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Light / Dark / System segmented choice inside the account menu.
+class _AppearanceChoices extends StatelessWidget {
+  const _AppearanceChoices({required this.selected, required this.onSelected});
+
+  final ThemeMode selected;
+  final ValueChanged<ThemeMode> onSelected;
+
+  static const _options = <(ThemeMode, IconData, String)>[
+    (ThemeMode.light, LucideIcons.sun, 'Light'),
+    (ThemeMode.dark, LucideIcons.moon, 'Dark'),
+    (ThemeMode.system, LucideIcons.monitor, 'Auto'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          for (final (mode, icon, label) in _options) ...[
+            Expanded(
+              child: GestureDetector(
+                onTap: () => onSelected(mode),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 7),
+                  decoration: BoxDecoration(
+                    color: mode == selected
+                        ? theme.colorScheme.secondary
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(
+                      color: mode == selected
+                          ? theme.colorScheme.border
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        icon,
+                        size: 15,
+                        color: mode == selected
+                            ? theme.colorScheme.foreground
+                            : theme.colorScheme.mutedForeground,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        label,
+                        style: theme.textTheme.muted.copyWith(
+                          fontSize: 11,
+                          fontWeight: mode == selected
+                              ? FontWeight.w600
+                              : FontWeight.w400,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (mode != _options.last.$1) const SizedBox(width: 6),
+          ],
+        ],
       ),
     );
   }

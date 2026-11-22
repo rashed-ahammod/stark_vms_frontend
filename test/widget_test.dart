@@ -11,6 +11,7 @@ import 'package:stark_vms/models/auth_models.dart';
 import 'package:stark_vms/models/page_response.dart';
 import 'package:stark_vms/models/vehicle.dart';
 import 'package:stark_vms/providers/auth_providers.dart';
+import 'package:stark_vms/providers/theme_providers.dart';
 import 'package:stark_vms/providers/vehicle_providers.dart';
 import 'package:stark_vms/repositories/auth_repository.dart';
 import 'package:stark_vms/repositories/vehicle_repository.dart';
@@ -67,11 +68,13 @@ class _StubAuthRepository implements AuthRepository {
 void main() {
   late Directory tempDir;
   late Box<dynamic> sessionBox;
+  late Box<dynamic> prefsBox;
 
   setUpAll(() async {
     tempDir = await Directory.systemTemp.createTemp('stark_vms_test');
     Hive.init(tempDir.path);
     sessionBox = await Hive.openBox<dynamic>('test_session');
+    prefsBox = await Hive.openBox<dynamic>('test_prefs');
   });
 
   tearDown(() async {
@@ -80,12 +83,14 @@ void main() {
 
   tearDownAll(() async {
     await sessionBox.close();
+    await prefsBox.close();
   });
 
   Widget buildApp() {
     return ProviderScope(
       overrides: [
         sessionBoxProvider.overrideWithValue(sessionBox),
+        prefsBoxProvider.overrideWithValue(prefsBox),
         vehicleRepositoryProvider.overrideWithValue(_StubVehicleRepository()),
         authRepositoryProvider.overrideWithValue(const _StubAuthRepository()),
       ],

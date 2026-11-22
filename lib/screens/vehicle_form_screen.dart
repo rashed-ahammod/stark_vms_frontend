@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,6 +37,14 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
   FuelType? _fuelType;
   VehicleStatus _status = VehicleStatus.available;
 
+  /// Cached result of [_hasUnsavedChanges], refreshed by the controller
+  /// listeners. Typing into a controller rebuilds nothing by itself, so this
+  /// is what makes the sticky bar and the back guard react live.
+  bool _isDirty = false;
+
+  /// The form as it was when last loaded or saved; `null` until prefilled.
+  String? _originalSnapshot;
+
   /// Set while the authoritative record is being re-fetched via GET /vehicles/{id}.
   bool _isLoadingVehicle = false;
 
@@ -64,6 +74,21 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     _vehicleType = v?.vehicleType;
     _fuelType = v?.fuelType;
     _status = v?.status ?? VehicleStatus.available;
+
+    _originalSnapshot = _snapshot();
+
+    for (final c in [
+      _vehicleNumberController,
+      _brandController,
+      _modelController,
+      _yearController,
+      _colorController,
+      _seatingCapacityController,
+      _driverNameController,
+      _driverPhoneController,
+    ]) {
+      c.addListener(_recomputeDirty);
+    }
 
     final editingId = v?.id;
     if (editingId != null) {
@@ -118,6 +143,9 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     _vehicleType = v.vehicleType;
     _fuelType = v.fuelType;
     _status = v.status;
+    // The freshly loaded record becomes the new baseline.
+    _originalSnapshot = _snapshot();
+    _isDirty = false;
   }
 
   @override
@@ -133,6 +161,97 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     super.dispose();
   }
 
+  /// Builds the record from the current field values.
+  ///
+  /// Shared by submit and by the unsaved-changes check, so the two can never
+  /// disagree about what counts as a change.
+  Vehicle _buildPayload(VehicleType type) {
+    final yearText = _yearController.text.trim();
+    final seatsText = _seatingCapacityController.text.trim();
+    final colorText = _colorController.text.trim();
+    final driverNameText = _driverNameController.text.trim();
+    final driverPhoneText = _driverPhoneController.text.trim();
+
+    return Vehicle(
+      vehicleNumber: _vehicleNumberController.text.trim(),
+      vehicleType: type,
+      brand: _brandController.text.trim(),
+      model: _modelController.text.trim(),
+      manufacturingYear: yearText.isEmpty ? null : int.tryParse(yearText),
+      color: colorText.isEmpty ? null : colorText,
+      fuelType: _fuelType,
+      seatingCapacity: seatsText.isEmpty ? null : int.tryParse(seatsText),
+      driverName: driverNameText.isEmpty ? null : driverNameText,
+      driverPhone: driverPhoneText.isEmpty ? null : driverPhoneText,
+      status: _status,
+    );
+  }
+
+  /// A comparable snapshot of every field.
+  ///
+  /// Taken straight from the controls rather than from [_buildPayload], which
+  /// needs a non-null vehicle type - routing through it would have hidden all
+  /// the other fields on a new form until a type was picked.
+  String _snapshot() => jsonEncode([
+    _vehicleNumberController.text.trim(),
+    _vehicleType?.name,
+    _brandController.text.trim(),
+    _modelController.text.trim(),
+    _yearController.text.trim(),
+    _colorController.text.trim(),
+    _fuelType?.name,
+    _seatingCapacityController.text.trim(),
+    _driverNameController.text.trim(),
+    _driverPhoneController.text.trim(),
+    _status.name,
+  ]);
+
+  /// Rebuilds only when the dirty state actually flips, not on every keystroke.
+  void _recomputeDirty() {
+    final dirty = _hasUnsavedChanges;
+    if (dirty != _isDirty && mounted) {
+      setState(() => _isDirty = dirty);
+    }
+  }
+
+  bool get _hasUnsavedChanges =>
+      _originalSnapshot != null && _snapshot() != _originalSnapshot;
+
+  /// Guards leaving the screen with edits that were never saved.
+  Future<bool> _confirmDiscard() async {
+    if (!_hasUnsavedChanges) return true;
+
+    final discard = await showShadDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ShadDialog.alert(
+        title: const Text('Discard changes?'),
+        description: const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'You have unsaved changes on this form. Leaving now will lose them.',
+          ),
+        ),
+        actions: [
+          ShadButton.outline(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep editing'),
+          ),
+          ShadButton.destructive(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Discard changes'),
+          ),
+        ],
+      ),
+    );
+    return discard == true;
+  }
+
+  Future<void> _close() async {
+    if (!await _confirmDiscard()) return;
+    if (!mounted) return;
+    Navigator.of(context).pop(false);
+  }
+
   Future<void> _submit() async {
     ref.read(vehicleFormProvider.notifier).clearErrors();
 
@@ -141,25 +260,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
       return;
     }
 
-    final yearText = _yearController.text.trim();
-    final seatsText = _seatingCapacityController.text.trim();
-    final colorText = _colorController.text.trim();
-    final driverNameText = _driverNameController.text.trim();
-    final driverPhoneText = _driverPhoneController.text.trim();
-
-    final payload = Vehicle(
-      vehicleNumber: _vehicleNumberController.text.trim(),
-      vehicleType: _vehicleType!,
-      brand: _brandController.text.trim(),
-      model: _modelController.text.trim(),
-      manufacturingYear: yearText.isEmpty ? null : int.parse(yearText),
-      color: colorText.isEmpty ? null : colorText,
-      fuelType: _fuelType,
-      seatingCapacity: seatsText.isEmpty ? null : int.parse(seatsText),
-      driverName: driverNameText.isEmpty ? null : driverNameText,
-      driverPhone: driverPhoneText.isEmpty ? null : driverPhoneText,
-      status: _status,
-    );
+    final payload = _buildPayload(_vehicleType!);
 
     final saved = await ref
         .read(vehicleFormProvider.notifier)
@@ -174,6 +275,8 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
           ),
         ),
       );
+      _originalSnapshot = _snapshot();
+      _isDirty = false;
       Navigator.of(context).pop(true);
     }
   }
@@ -185,8 +288,17 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
     final isWide = MediaQuery.sizeOf(context).width >= 720;
     final maxYear = DateTime.now().year + 1;
 
-    return Scaffold(
-      backgroundColor: AppSurface.page,
+    return PopScope(
+      // A system/browser back with unsaved edits asks first.
+      canPop: !_isDirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (await _confirmDiscard() && mounted) {
+          if (context.mounted) Navigator.of(context).pop(false);
+        }
+      },
+      child: Scaffold(
+      backgroundColor: AppSurface.of(context).page,
       body: Column(
         children: [
           Container(
@@ -209,9 +321,7 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                     children: [
                       ShadButton.outline(
                         size: ShadButtonSize.sm,
-                        onPressed: formState.isSubmitting
-                            ? null
-                            : () => Navigator.of(context).pop(false),
+                        onPressed: formState.isSubmitting ? null : _close,
                         leading: const Icon(LucideIcons.arrowLeft, size: 15),
                         child: const Text('Back'),
                       ),
@@ -367,8 +477,10 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                         .toList(),
                                     selectedOptionBuilder: (_, value) =>
                                         Text(value.label),
-                                    onChanged: (value) =>
-                                        setState(() => _vehicleType = value),
+                                    onChanged: (value) {
+                                      setState(() => _vehicleType = value);
+                                      _recomputeDirty();
+                                    },
                                     validator: (value) {
                                       if (value == null) {
                                         return 'Vehicle type is required';
@@ -499,8 +611,10 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                         .toList(),
                                     selectedOptionBuilder: (_, value) =>
                                         Text(value.label),
-                                    onChanged: (value) =>
-                                        setState(() => _fuelType = value),
+                                    onChanged: (value) {
+                                      setState(() => _fuelType = value);
+                                      _recomputeDirty();
+                                    },
                                   ),
                                   ),
                                   right: ShadInputFormField(
@@ -598,44 +712,10 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                                 const SizedBox(height: 16),
                                 _StatusSelector(
                                   value: _status,
-                                  onChanged: (value) =>
-                                      setState(() => _status = value),
-                                ),
-                                const SizedBox(height: 28),
-                                const ShadSeparator.horizontal(),
-                                const SizedBox(height: 20),
-                                Wrap(
-                                  alignment: WrapAlignment.end,
-                                  spacing: 12,
-                                  runSpacing: 10,
-                                  children: [
-                                    ShadButton.outline(
-                                      onPressed: formState.isSubmitting
-                                          ? null
-                                          : () =>
-                                                Navigator.of(context)
-                                                    .pop(false),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    ShadButton(
-                                      onPressed: formState.isSubmitting
-                                          ? null
-                                          : _submit,
-                                      leading: Icon(
-                                        _isEditing
-                                            ? LucideIcons.check
-                                            : LucideIcons.plus,
-                                        size: 15,
-                                      ),
-                                      child: Text(
-                                        formState.isSubmitting
-                                            ? 'Saving...'
-                                            : (_isEditing
-                                                  ? 'Save Changes'
-                                                  : 'Create Vehicle'),
-                                      ),
-                                    ),
-                                  ],
+                                  onChanged: (value) {
+                                    setState(() => _status = value);
+                                    _recomputeDirty();
+                                  },
                                 ),
                               ],
                             ),
@@ -645,7 +725,143 @@ class _VehicleFormScreenState extends ConsumerState<VehicleFormScreen> {
                     ),
                   ),
           ),
+          // Sticky action bar: on a form this long the save control must stay
+          // reachable without scrolling to the bottom.
+          _FormActionBar(
+            isEditing: _isEditing,
+            isSubmitting: formState.isSubmitting,
+            hasUnsavedChanges: _isDirty,
+            onCancel: _close,
+            onSubmit: _submit,
+          ),
         ],
+      ),
+      ),
+    );
+  }
+}
+
+/// Sticky bar holding Cancel and Save.
+///
+/// It sits outside the scroll view so the primary action is always on screen,
+/// and it doubles as the place that tells the user there is unsaved work.
+class _FormActionBar extends StatelessWidget {
+  const _FormActionBar({
+    required this.isEditing,
+    required this.isSubmitting,
+    required this.hasUnsavedChanges,
+    required this.onCancel,
+    required this.onSubmit,
+  });
+
+  final bool isEditing;
+  final bool isSubmitting;
+  final bool hasUnsavedChanges;
+  final VoidCallback onCancel;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.card,
+        border: Border(top: BorderSide(color: theme.colorScheme.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 880),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final Widget? hint = hasUnsavedChanges && !isSubmitting
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              LucideIcons.circleDot,
+                              size: 14,
+                              color: theme.colorScheme.mutedForeground,
+                            ),
+                            const SizedBox(width: 7),
+                            Flexible(
+                              child: Text(
+                                'Unsaved changes',
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.muted.copyWith(
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : null;
+
+                  final cancel = ShadButton.outline(
+                    onPressed: isSubmitting ? null : onCancel,
+                    child: const Text('Cancel'),
+                  );
+
+                  final compact = constraints.maxWidth < 520;
+                  final save = ShadButton(
+                    onPressed: isSubmitting ? null : onSubmit,
+                    leading: isSubmitting
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            isEditing ? LucideIcons.check : LucideIcons.plus,
+                            size: 15,
+                          ),
+                    child: Text(
+                      isSubmitting
+                          ? 'Saving...'
+                          : compact
+                          ? (isEditing ? 'Save' : 'Create')
+                          : (isEditing ? 'Save Changes' : 'Create Vehicle'),
+                    ),
+                  );
+
+                  // Narrow: the buttons share a full-width row with the hint
+                  // above them, instead of overflowing sideways.
+                  if (compact) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (hint != null) ...[hint, const SizedBox(height: 10)],
+                        Row(
+                          children: [
+                            Expanded(child: cancel),
+                            const SizedBox(width: 12),
+                            Expanded(child: save),
+                          ],
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Row(
+                    children: [
+                      if (hint != null) Flexible(child: hint),
+                      const Spacer(),
+                      cancel,
+                      const SizedBox(width: 12),
+                      save,
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -711,7 +927,7 @@ class _StatusSegment extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
-    final palette = StatusPalette.of(status);
+    final palette = StatusPalette.of(context, status);
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,

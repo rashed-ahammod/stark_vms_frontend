@@ -11,7 +11,7 @@ class VehicleStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = StatusPalette.of(status);
+    final palette = StatusPalette.of(context, status);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

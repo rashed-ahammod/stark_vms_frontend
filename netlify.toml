@@ -1,0 +1,74 @@
+# Netlify build for the Stark Group VMS Flutter Web app.
+#
+# Netlify's build image does not ship Flutter, so the SDK is fetched during the
+# build. Pin the version here rather than tracking `stable`, so a new Flutter
+# release cannot change the output without a commit.
+#
+# Required environment variable (set in Netlify > Site configuration >
+# Environment variables, per deploy context):
+#
+#   API_BASE_URL   e.g. https://api.your-domain.com/api
+#
+# It is NOT a secret: the value is compiled into the published JavaScript and
+# is readable by anyone. Never put the admin password or JWT secret here.
+
+[build]
+  publish = "build/web"
+  command = """
+    set -e
+    FLUTTER_VERSION=3.47.8
+    if [ ! -d "$HOME/flutter" ]; then
+      git clone https://github.com/flutter/flutter.git \
+        --depth 1 --branch "$FLUTTER_VERSION" "$HOME/flutter"
+    fi
+    export PATH="$HOME/flutter/bin:$PATH"
+    flutter --version
+    flutter pub get
+    flutter build web --release --dart-define=API_BASE_URL="$API_BASE_URL"
+  """
+
+# The app uses Flutter's default hash URL strategy (/#/...), so it has no real
+# server-side routes today. This fallback costs nothing and keeps any direct
+# path from 404ing if a path-based router is ever added.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The entry point and bootstrap must never be cached, or visitors keep running
+# a previous build after a deploy. Hashed assets below are safe to cache hard.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/flutter_bootstrap.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/flutter_service_worker.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/canvaskit/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Conservative security headers. No Content-Security-Policy is set here on
+# purpose: Flutter Web loads the CanvasKit runtime and fonts from Google CDNs,
+# and a policy written blind would break the app rather than protect it. Add
+# one deliberately once the final asset origins are known.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"

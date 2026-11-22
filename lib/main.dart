@@ -3,7 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import 'config/app_colors.dart';
 import 'providers/auth_providers.dart';
+import 'providers/theme_providers.dart';
+import 'repositories/prefs_store.dart';
 import 'repositories/session_store.dart';
 import 'screens/login_screen.dart';
 import 'screens/vehicle_list_screen.dart';
@@ -16,27 +19,43 @@ Future<void> main() async {
   // knows whether a session exists.
   await Hive.initFlutter();
   final sessionBox = await Hive.openBox<dynamic>(SessionStore.boxName);
+  // Appearance is read before the first frame so the app never flashes the
+  // wrong theme on start-up.
+  final prefsBox = await Hive.openBox<dynamic>(PrefsStore.boxName);
 
   runApp(
     ProviderScope(
-      overrides: [sessionBoxProvider.overrideWithValue(sessionBox)],
+      overrides: [
+        sessionBoxProvider.overrideWithValue(sessionBox),
+        prefsBoxProvider.overrideWithValue(prefsBox),
+      ],
       child: const StarkVmsApp(),
     ),
   );
 }
 
-class StarkVmsApp extends StatelessWidget {
+class StarkVmsApp extends ConsumerWidget {
   const StarkVmsApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return ShadApp(
       title: 'Stark Group VMS',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.light,
+      themeMode: ref.watch(themeModeProvider),
       theme: ShadThemeData(
         brightness: Brightness.light,
         colorScheme: const ShadSlateColorScheme.light(),
+      ),
+      darkTheme: ShadThemeData(
+        brightness: Brightness.dark,
+        // Slate dark uses one near-black for both card and background, which
+        // would leave every panel flush with the page; lifting card a step
+        // keeps the same layering the light theme has.
+        colorScheme: const ShadSlateColorScheme.dark(
+          card: AppSurface.darkCard,
+          popover: AppSurface.darkCard,
+        ),
       ),
       home: const AuthGate(),
     );
@@ -74,7 +93,7 @@ class _SessionCheckScreen extends StatelessWidget {
     final theme = ShadTheme.of(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppSurface.of(context).page,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,

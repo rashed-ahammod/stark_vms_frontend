@@ -62,27 +62,54 @@ class _VehicleRowCardState extends State<VehicleRowCard> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
-            color: _isHovered ? AppSurface.hover : theme.colorScheme.card,
+            color: _isHovered
+                ? AppSurface.of(context).hover
+                : theme.colorScheme.card,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: _isHovered
-                  ? AppSurface.borderStrong
+                  ? AppSurface.of(context).borderStrong
                   : theme.colorScheme.border,
             ),
           ),
-          child: isWide
-              ? _DesktopVehicleRow(
-                  vehicle: widget.vehicle,
-                  onEdit: widget.onEdit,
-                  onDelete: widget.onDelete,
-                )
-              : _TabletVehicleRow(
-                  vehicle: widget.vehicle,
-                  onEdit: widget.onEdit,
-                  onDelete: widget.onDelete,
+          // A Stack, not a Row: the rail has to stretch to whatever height the
+          // content settles on, and a Row of all-stretch children has no child
+          // left to define that height.
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 15, 20, 15),
+                child: isWide
+                    ? _DesktopVehicleRow(
+                        vehicle: widget.vehicle,
+                        onEdit: widget.onEdit,
+                        onDelete: widget.onDelete,
+                      )
+                    : _TabletVehicleRow(
+                        vehicle: widget.vehicle,
+                        onEdit: widget.onEdit,
+                        onDelete: widget.onDelete,
+                      ),
+              ),
+              // Status rail: a quiet second cue so a row's state is readable
+              // while scanning, without relying on colour alone - the badge
+              // beside it still carries the written label.
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 3,
+                child: ColoredBox(
+                  color: StatusPalette.of(
+                    context,
+                    widget.vehicle.status,
+                  ).accent,
                 ),
+              ),
+            ],
+          ),
         ),
       ),
     );

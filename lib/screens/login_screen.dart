@@ -4,6 +4,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../config/app_colors.dart';
 import '../providers/auth_providers.dart';
+import '../providers/theme_providers.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key, this.sessionExpired = false});
@@ -50,17 +51,50 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // Below this width the brand panel is dropped and the form takes the full
     // screen with its own compact header.
     final isWide = MediaQuery.sizeOf(context).width >= 920;
+    final theme = ShadTheme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: AppSurface.page,
-      body: isWide
-          ? Row(
-              children: [
-                const Expanded(flex: 5, child: _BrandPanel()),
-                Expanded(flex: 4, child: _buildFormArea(showBrand: false)),
-              ],
-            )
-          : _buildFormArea(showBrand: true),
+      backgroundColor: AppSurface.of(context).page,
+      // Stacked so the appearance toggle can sit in the corner without
+      // disturbing the centred form.
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: isWide
+                ? Row(
+                    children: [
+                      const Expanded(flex: 5, child: _BrandPanel()),
+                      Expanded(
+                        flex: 4,
+                        child: _buildFormArea(showBrand: false),
+                      ),
+                    ],
+                  )
+                : _buildFormArea(showBrand: true),
+          ),
+          Positioned(
+            top: 12,
+            right: 16,
+            child: SafeArea(
+              child: ShadTooltip(
+                builder: (_) => Text(
+                  isDark ? 'Switch to light mode' : 'Switch to dark mode',
+                ),
+                child: ShadIconButton.ghost(
+                  onPressed: () => ref
+                      .read(themeModeProvider.notifier)
+                      .toggle(theme.brightness),
+                  icon: Icon(
+                    isDark ? LucideIcons.sun : LucideIcons.moon,
+                    size: 17,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -278,6 +312,9 @@ class _BrandPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
+      // Deliberately the same dark gradient in both themes: it is a branded
+      // panel, not a themed surface. In light mode it anchors the page; in
+      // dark it sits a step above the near-black background.
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
