@@ -186,7 +186,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               id: 'username',
               controller: _usernameController,
               label: const Text('Username'),
-              placeholder: const Text('e.g. admin'),
+              placeholder: const Text('Enter your username'),
               forceErrorText: formState.fieldErrors['username'],
               enabled: !formState.isSubmitting,
               onChanged: (_) => ref
