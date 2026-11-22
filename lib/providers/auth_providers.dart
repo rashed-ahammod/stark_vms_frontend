@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce/hive.dart';
 
+import '../config/api_config.dart';
 import '../models/auth_models.dart';
 import '../network/auth_api.dart';
 import '../repositories/auth_repository.dart';
@@ -26,7 +29,7 @@ final authApiProvider = Provider<AuthApi>((ref) {
 });
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  return AuthRepository(ref.watch(authApiProvider));
+  return AuthRepository(ref.watch(authApiProvider), ref.watch(dioProvider));
 });
 
 enum AuthStatus {
@@ -137,11 +140,16 @@ final authProvider = NotifierProvider<AuthNotifier, AuthState>(
 class LoginFormState {
   const LoginFormState({
     this.isSubmitting = false,
+    this.isSlow = false,
     this.generalError,
     this.fieldErrors = const {},
   });
 
   final bool isSubmitting;
+
+  /// Set once a submit has been running long enough that the delay needs
+  /// explaining - a spun-down free-tier backend can take about a minute.
+  final bool isSlow;
   final String? generalError;
   final Map<String, String> fieldErrors;
 }
@@ -172,6 +180,13 @@ class LoginFormNotifier extends Notifier<LoginFormState> {
   }) async {
     state = const LoginFormState(isSubmitting: true);
 
+    // Flips the UI to "still working" rather than leaving a bare spinner.
+    final slowTimer = Timer(ApiConfig.slowRequestHint, () {
+      if (state.isSubmitting) {
+        state = const LoginFormState(isSubmitting: true, isSlow: true);
+      }
+    });
+
     try {
       final result = await ref
           .read(authRepositoryProvider)
@@ -199,6 +214,8 @@ class LoginFormNotifier extends Notifier<LoginFormState> {
         generalError: 'An unexpected error occurred while signing in.',
       );
       return false;
+    } finally {
+      slowTimer.cancel();
     }
   }
 }

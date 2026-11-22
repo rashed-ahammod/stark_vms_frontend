@@ -30,9 +30,32 @@ class AuthApiException implements Exception {
 /// Repository wrapping [AuthApi] and translating [DioException]s into
 /// user-friendly [AuthApiException]s.
 class AuthRepository {
-  const AuthRepository(this._api);
+  const AuthRepository(this._api, this._dio);
 
   final AuthApi _api;
+  final Dio _dio;
+
+  /// Nudges a sleeping backend awake.
+  ///
+  /// Free hosting tiers spin an idle instance down, and the first request then
+  /// waits the better part of a minute. Firing this when the login screen
+  /// opens means the instance is already warming while the user types.
+  /// Failures are deliberately swallowed: this is an optimisation, and the
+  /// endpoint may not exist on every deployment.
+  Future<void> warmUp() async {
+    try {
+      await _dio.getUri<void>(
+        Uri.parse(ApiConfig.healthUrl),
+        options: Options(
+          // No auth, and a failure here must never surface to the user.
+          validateStatus: (_) => true,
+          receiveTimeout: ApiConfig.receiveTimeout,
+        ),
+      );
+    } catch (_) {
+      // Ignored on purpose.
+    }
+  }
 
   Future<LoginResponse> login({
     required String username,

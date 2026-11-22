@@ -54,6 +54,9 @@ class _StubAuthRepository implements AuthRepository {
   );
 
   @override
+  Future<void> warmUp() async {}
+
+  @override
   Future<AuthUser> me() async => user;
 
   @override

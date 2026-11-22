@@ -9,6 +9,10 @@
 #
 #   API_BASE_URL   e.g. https://api.your-domain.com/api
 #
+# If it is not set the build falls back to the current deployed backend
+# (see the command below) and fails outright on a non-https value, so a
+# missing variable can never produce a silently broken site.
+#
 # It is NOT a secret: the value is compiled into the published JavaScript and
 # is readable by anyone. Never put the admin password or JWT secret here.
 
@@ -22,6 +26,18 @@
         --depth 1 --branch "$FLUTTER_VERSION" "$HOME/flutter"
     fi
     export PATH="$HOME/flutter/bin:$PATH"
+
+    # An unset Netlify variable would otherwise pass an EMPTY --dart-define,
+    # and String.fromEnvironment returns "" for that rather than falling back
+    # to its default - shipping a build that silently cannot reach any API.
+    API_BASE_URL="${API_BASE_URL:-https://stark-vms-backend-p3m7.onrender.com/api}"
+    case "$API_BASE_URL" in
+      https://*) ;;
+      *) echo "API_BASE_URL must be an https:// URL, got: $API_BASE_URL" >&2
+         exit 1 ;;
+    esac
+    echo "Building against $API_BASE_URL"
+
     flutter --version
     flutter pub get
     flutter build web --release --dart-define=API_BASE_URL="$API_BASE_URL"

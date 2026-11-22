@@ -1,0 +1,4 @@
+# Netlify SPA fallback. Files in web/ are copied into build/web, so this also
+# applies to a drag-and-drop or CLI deploy of build/web, where the repo-root
+# netlify.toml is not uploaded.
+/*    /index.html   200

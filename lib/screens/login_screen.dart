@@ -24,6 +24,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscurePassword = true;
 
   @override
+  void initState() {
+    super.initState();
+    // Start waking a spun-down backend while the user types, so the first
+    // real request is not the one that pays the cold-start cost.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(authRepositoryProvider).warmUp();
+    });
+  }
+
+  @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
@@ -269,6 +279,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 formState.isSubmitting ? 'Signing in...' : 'Sign In',
               ),
             ),
+            // A spun-down free-tier backend can take about a minute to answer
+            // its first request. Saying so turns a frozen-looking wait into an
+            // explained one.
+            if (formState.isSlow) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Icon(
+                    LucideIcons.serverCog,
+                    size: 15,
+                    color: theme.colorScheme.mutedForeground,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Waking the server. The first sign-in after a quiet '
+                      'period can take up to a minute.',
+                      style: theme.textTheme.muted.copyWith(fontSize: 12.5),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
